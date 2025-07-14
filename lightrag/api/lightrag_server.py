@@ -106,15 +106,17 @@ def create_app(args):
         "openai",
         "openai-ollama",
         "azure_openai",
+        "siliconcloud",
     ]:
         raise Exception("llm binding not supported")
 
     if args.embedding_binding not in [
         "lollms",
-        "ollama",
+        "ollama", 
         "openai",
         "azure_openai",
         "jina",
+        "siliconcloud"
     ]:
         raise Exception("embedding binding not supported")
 
@@ -243,6 +245,8 @@ def create_app(args):
             azure_openai_complete_if_cache,
             azure_openai_embed,
         )
+    if args.llm_binding == "siliconcloud" or args.embedding_binding == "siliconcloud":
+        from lightrag.llm.siliconcloud import siliconcloud_complete_if_cache, siliconcloud_embedding
     if args.llm_binding_host == "openai-ollama" or args.embedding_binding == "ollama":
         from lightrag.llm.openai import openai_complete_if_cache
         from lightrag.llm.ollama import ollama_embed
@@ -297,6 +301,32 @@ def create_app(args):
             **kwargs,
         )
 
+    async def siliconcloud_model_complete(
+        prompt,
+        system_prompt=None,
+        history_messages=None,
+        keyword_extraction=False,
+        **kwargs,
+    ) -> str:
+        keyword_extraction = kwargs.pop("keyword_extraction", None)
+        # 清理kwargs中的重复参数，避免与显式参数冲突
+        kwargs.pop("base_url", None)
+        kwargs.pop("api_key", None)
+        if history_messages is None:
+            history_messages = []
+        kwargs["temperature"] = args.temperature
+        
+        return await siliconcloud_complete_if_cache(
+            args.llm_model,
+            prompt,
+            system_prompt=system_prompt,
+            history_messages=history_messages,
+            base_url=args.llm_binding_host,
+            api_key=args.llm_binding_api_key,
+            keyword_extraction=keyword_extraction,
+            **kwargs,
+        )
+
     embedding_func = EmbeddingFunc(
         embedding_dim=args.embedding_dim,
         func=lambda texts: lollms_embed(
@@ -327,6 +357,13 @@ def create_app(args):
             api_key=args.embedding_binding_api_key,
         )
         if args.embedding_binding == "jina"
+        else siliconcloud_embedding(
+            texts,
+            model=args.embedding_model,
+            base_url=args.embedding_binding_host,
+            api_key=args.embedding_binding_api_key,
+        )
+        if args.embedding_binding == "siliconcloud"
         else openai_embed(
             texts,
             model=args.embedding_model,
@@ -371,7 +408,7 @@ def create_app(args):
     )
 
     # Initialize RAG
-    if args.llm_binding in ["lollms", "ollama", "openai"]:
+    if args.llm_binding in ["lollms", "ollama", "openai", "siliconcloud"]:
         rag = LightRAG(
             working_dir=args.working_dir,
             workspace=args.workspace,
@@ -379,6 +416,8 @@ def create_app(args):
             if args.llm_binding == "lollms"
             else ollama_model_complete
             if args.llm_binding == "ollama"
+            else siliconcloud_model_complete
+            if args.llm_binding == "siliconcloud"
             else openai_alike_model_complete,
             llm_model_name=args.llm_model,
             llm_model_max_async=args.max_async,
@@ -392,6 +431,12 @@ def create_app(args):
                 "api_key": args.llm_binding_api_key,
             }
             if args.llm_binding == "lollms" or args.llm_binding == "ollama"
+            else {
+                "base_url": args.llm_binding_host,
+                "api_key": args.llm_binding_api_key,
+                "timeout": args.timeout,
+            }
+            if args.llm_binding == "siliconcloud"
             else {},
             embedding_func=embedding_func,
             kv_storage=args.kv_storage,

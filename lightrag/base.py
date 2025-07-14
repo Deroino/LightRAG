@@ -703,6 +703,8 @@ class DocProcessingStatus:
     """Tracking ID for monitoring progress"""
     chunks_count: int | None = None
     """Number of chunks after splitting, used for processing"""
+    chunks_processed: int | None = None
+    """Number of chunks that have been processed"""
     chunks_list: list[str] | None = field(default_factory=list)
     """List of chunk IDs associated with this document, used for deletion"""
     error_msg: str | None = None
