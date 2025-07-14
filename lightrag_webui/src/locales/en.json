@@ -56,6 +56,16 @@
       "failed": "Clear Documents Failed:\n{{message}}",
       "error": "Clear Documents Failed:\n{{error}}"
     },
+    "retryFailedDocuments": {
+      "button": "Retry All Failed Documents",
+      "tooltip": "Retry {{count}} failed documents",
+      "noFailedTooltip": "No failed documents to retry",
+      "retrying": "Retrying all failed documents...",
+      "success": "Retry started for {{count}} failed documents",
+      "error": "Retry failed documents failed:\n{{error}}",
+      "noFailedDocuments": "No failed documents to retry",
+      "busy": "Pipeline is busy processing documents. Please try again later."
+    },
     "deleteDocuments": {
       "button": "Delete",
       "tooltip": "Delete selected documents",
@@ -130,7 +140,7 @@
         "summary": "Summary",
         "status": "Status",
         "length": "Length",
-        "chunks": "Chunks",
+        "chunksProgress": "Chunk Processing Progress",
         "created": "Created",
         "updated": "Updated",
         "metadata": "Metadata",
