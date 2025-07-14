@@ -70,3 +70,16 @@ test_*
 
 # Cline files
 memory-bank/
+
+# Frontend build outputs
+lightrag/api/webui/
+lightrag_webui/build/
+lightrag_webui/dist/
+lightrag_webui/assets/
+node_modules/
+package-lock.json
+yarn.lock
+
+# Process and log files
+nohup.out
+auto-test-fix.log
