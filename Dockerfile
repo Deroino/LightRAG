@@ -3,11 +3,13 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install Rust and required build dependencies
+# Install Node.js, Rust and required build dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
     pkg-config \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && . $HOME/.cargo/env
@@ -29,6 +31,15 @@ RUN pip install --user --no-cache-dir openai ollama tiktoken
 # Install depndencies for default document loader
 RUN pip install --user --no-cache-dir pypdf2 python-docx python-pptx openpyxl
 
+# Copy WebUI source code and build frontend
+COPY lightrag_webui ./lightrag_webui
+COPY lightrag ./lightrag
+
+# Build WebUI
+RUN cd lightrag_webui \
+    && npm install \
+    && npm run build-no-bun
+
 # Final stage
 FROM python:3.11-slim
 
@@ -36,7 +47,7 @@ WORKDIR /app
 
 # Copy only necessary files from builder
 COPY --from=builder /root/.local /root/.local
-COPY ./lightrag ./lightrag
+COPY --from=builder /app/lightrag ./lightrag
 COPY setup.py .
 
 RUN pip install ".[api]"
