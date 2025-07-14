@@ -30,6 +30,9 @@ from .utils import (
     linear_gradient_weighted_polling,
     process_chunks_unified,
     build_file_path,
+    update_pipeline_msg,
+    log_error_with_pipeline_msg,
+    log_info_with_pipeline_msg
 )
 from .base import (
     BaseGraphStorage,
@@ -312,11 +315,7 @@ async def _rebuild_knowledge_from_chunks(
         all_referenced_chunk_ids.update(chunk_ids)
 
     status_message = f"Rebuilding knowledge from {len(all_referenced_chunk_ids)} cached chunk extractions (parallel processing)"
-    logger.info(status_message)
-    if pipeline_status is not None and pipeline_status_lock is not None:
-        async with pipeline_status_lock:
-            pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     # Get cached extraction results for these chunks using storage
     #    cached_results： chunk_id -> [list of extraction result from LLM cache sorted by created_at]
@@ -329,10 +328,7 @@ async def _rebuild_knowledge_from_chunks(
     if not cached_results:
         status_message = "No cached extraction results found, cannot rebuild"
         logger.warning(status_message)
-        if pipeline_status is not None and pipeline_status_lock is not None:
-            async with pipeline_status_lock:
-                pipeline_status["latest_message"] = status_message
-                pipeline_status["history_messages"].append(status_message)
+        await update_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
         return
 
     # Process cached results to get entities and relationships for each chunk
@@ -374,11 +370,7 @@ async def _rebuild_knowledge_from_chunks(
             status_message = (
                 f"Failed to parse cached extraction result for chunk {chunk_id}: {e}"
             )
-            logger.info(status_message)  # Per requirement, change to info
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+            await update_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
             continue
 
     # Get max async tasks limit from global_config for semaphore control
@@ -413,19 +405,11 @@ async def _rebuild_knowledge_from_chunks(
                     status_message = (
                         f"Rebuilt entity: {entity_name} from {len(chunk_ids)} chunks"
                     )
-                    logger.info(status_message)
-                    if pipeline_status is not None and pipeline_status_lock is not None:
-                        async with pipeline_status_lock:
-                            pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
                 except Exception as e:
                     failed_entities_count += 1
                     status_message = f"Failed to rebuild entity {entity_name}: {e}"
-                    logger.info(status_message)  # Per requirement, change to info
-                    if pipeline_status is not None and pipeline_status_lock is not None:
-                        async with pipeline_status_lock:
-                            pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     async def _locked_rebuild_relationship(src, tgt, chunk_ids):
         nonlocal rebuilt_relationships_count, failed_relationships_count
@@ -452,19 +436,11 @@ async def _rebuild_knowledge_from_chunks(
                     )
                     rebuilt_relationships_count += 1
                     status_message = f"Rebuilt relationship: {src}->{tgt} from {len(chunk_ids)} chunks"
-                    logger.info(status_message)
-                    if pipeline_status is not None and pipeline_status_lock is not None:
-                        async with pipeline_status_lock:
-                            pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
                 except Exception as e:
                     failed_relationships_count += 1
                     status_message = f"Failed to rebuild relationship {src}->{tgt}: {e}"
-                    logger.info(status_message)  # Per requirement, change to info
-                    if pipeline_status is not None and pipeline_status_lock is not None:
-                        async with pipeline_status_lock:
-                            pipeline_status["latest_message"] = status_message
-                            pipeline_status["history_messages"].append(status_message)
+                    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     # Create tasks for parallel processing
     tasks = []
@@ -481,11 +457,7 @@ async def _rebuild_knowledge_from_chunks(
 
     # Log parallel processing start
     status_message = f"Starting parallel rebuild of {len(entities_to_rebuild)} entities and {len(relationships_to_rebuild)} relationships (async: {graph_max_async})"
-    logger.info(status_message)
-    if pipeline_status is not None and pipeline_status_lock is not None:
-        async with pipeline_status_lock:
-            pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     # Execute all tasks in parallel with semaphore control and early failure detection
     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
@@ -509,11 +481,7 @@ async def _rebuild_knowledge_from_chunks(
     if failed_entities_count > 0 or failed_relationships_count > 0:
         status_message += f" Failed: {failed_entities_count} entities, {failed_relationships_count} relationships."
 
-    logger.info(status_message)
-    if pipeline_status is not None and pipeline_status_lock is not None:
-        async with pipeline_status_lock:
-            pipeline_status["latest_message"] = status_message
-            pipeline_status["history_messages"].append(status_message)
+    await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
 
 async def _get_cached_extraction_results(
@@ -977,11 +945,7 @@ async def _merge_nodes_then_upsert(
     if num_fragment > 1:
         if num_fragment >= force_llm_summary_on_merge:
             status_message = f"LLM merge N: {entity_name} | {num_new_fragment}+{num_fragment-num_new_fragment}"
-            logger.info(status_message)
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+            await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
             description = await _handle_entity_relation_summary(
                 entity_name,
                 description,
@@ -990,11 +954,7 @@ async def _merge_nodes_then_upsert(
             )
         else:
             status_message = f"Merge N: {entity_name} | {num_new_fragment}+{num_fragment-num_new_fragment}"
-            logger.info(status_message)
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+            await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     node_data = dict(
         entity_id=entity_name,
@@ -1135,11 +1095,7 @@ async def _merge_edges_then_upsert(
     if num_fragment > 1:
         if num_fragment >= force_llm_summary_on_merge:
             status_message = f"LLM merge E: {src_id} - {tgt_id} | {num_new_fragment}+{num_fragment-num_new_fragment}"
-            logger.info(status_message)
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+            await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
             description = await _handle_entity_relation_summary(
                 f"({src_id}, {tgt_id})",
                 description,
@@ -1148,11 +1104,7 @@ async def _merge_edges_then_upsert(
             )
         else:
             status_message = f"Merge E: {src_id} - {tgt_id} | {num_new_fragment}+{num_fragment-num_new_fragment}"
-            logger.info(status_message)
-            if pipeline_status is not None and pipeline_status_lock is not None:
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = status_message
-                    pipeline_status["history_messages"].append(status_message)
+            await log_info_with_pipeline_msg(status_message, pipeline_status, pipeline_status_lock)
 
     await knowledge_graph_inst.upsert_edge(
         src_id,
@@ -1237,22 +1189,21 @@ async def merge_nodes_and_edges(
     total_entities_count = len(all_nodes)
     total_relations_count = len(all_edges)
 
-    log_message = f"Merging stage {current_file_number}/{total_files}: {file_path}"
-    logger.info(log_message)
-    async with pipeline_status_lock:
-        pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+    # Merge nodes and edges
+    await log_info_with_pipeline_msg(
+        f"Merging stage {current_file_number}/{total_files}: {file_path}",
+        pipeline_status, pipeline_status_lock)
 
     # Get max async tasks limit from global_config for semaphore control
     graph_max_async = global_config.get("llm_model_max_async", 4) * 2
     semaphore = asyncio.Semaphore(graph_max_async)
 
     # ===== Phase 1: Process all entities concurrently =====
-    log_message = f"Phase 1: Processing {total_entities_count} entities (async: {graph_max_async})"
-    logger.info(log_message)
-    async with pipeline_status_lock:
-        pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+    await log_info_with_pipeline_msg(
+        f"Phase 1: Processing {total_entities_count} entities (async: {graph_max_async})",
+        pipeline_status,
+        pipeline_status_lock,
+    )
 
     async def _locked_process_entity_name(entity_name, entities):
         async with semaphore:
@@ -1312,11 +1263,11 @@ async def merge_nodes_and_edges(
         processed_entities = [task.result() for task in entity_tasks]
 
     # ===== Phase 2: Process all relationships concurrently =====
-    log_message = f"Phase 2: Processing {total_relations_count} relations (async: {graph_max_async})"
-    logger.info(log_message)
-    async with pipeline_status_lock:
-        pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+    await log_info_with_pipeline_msg(
+        f"Phase 2: Processing {total_relations_count} relations (async: {graph_max_async})",
+        pipeline_status,
+        pipeline_status_lock,
+    )
 
     async def _locked_process_edges(edge_key, edges):
         async with semaphore:
@@ -1456,10 +1407,7 @@ async def merge_nodes_and_edges(
             # Don't raise exception to avoid affecting main flow
 
     log_message = f"Completed merging: {len(processed_entities)} entities, {len(all_added_entities)} added entities, {len(processed_edges)} relations"
-    logger.info(log_message)
-    async with pipeline_status_lock:
-        pipeline_status["latest_message"] = log_message
-        pipeline_status["history_messages"].append(log_message)
+    await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
 
 async def extract_entities(
@@ -1469,6 +1417,7 @@ async def extract_entities(
     pipeline_status_lock=None,
     llm_response_cache: BaseKVStorage | None = None,
     text_chunks_storage: BaseKVStorage | None = None,
+    progress_callback: callable = None,
 ) -> list:
     use_llm_func: callable = global_config["llm_model_func"]
     entity_extract_max_gleaning = global_config["entity_extract_max_gleaning"]
@@ -1583,6 +1532,10 @@ async def extract_entities(
             **{**context_base, "input_text": content}
         )
 
+        # Add detailed LLM call information
+        prompt_msg = f"🧠 调用LLM进行实体提取 - 内容预览: {content}"
+        await update_pipeline_msg(prompt_msg, pipeline_status, pipeline_status_lock)
+
         final_result = await use_llm_func_with_cache(
             hint_prompt,
             use_llm_func,
@@ -1591,6 +1544,11 @@ async def extract_entities(
             chunk_id=chunk_key,
             cache_keys_collector=cache_keys_collector,
         )
+        
+        # Log LLM response details
+        response_preview = final_result[:100] + "..." if len(final_result) > 100 else final_result
+        response_msg = f"✅ LLM Response: {response_preview}"
+        await update_pipeline_msg(response_msg, pipeline_status, pipeline_status_lock)
 
         # Store LLM cache reference in chunk (will be handled by use_llm_func_with_cache)
         history = pack_user_ass_to_openai_messages(hint_prompt, final_result)
@@ -1618,6 +1576,26 @@ async def extract_entities(
             glean_nodes, glean_edges = await _process_extraction_result(
                 glean_result, chunk_key, file_path
             )
+            
+            # Log gleaning extraction details
+            glean_entities_count = len(glean_nodes)
+            glean_relations_count = len(glean_edges)
+            glean_extract_msg = f"🔍 精化提取结果: {glean_entities_count} 实体, {glean_relations_count} 关系"
+            await update_pipeline_msg(glean_extract_msg, pipeline_status, pipeline_status_lock)
+            
+            # Log detailed gleaning entities (if any)
+            if glean_nodes:
+                glean_entity_names = list(glean_nodes.keys())[:3]  # Show first 3 entities
+                glean_entities_detail = f"🆕 精化实体: {', '.join(glean_entity_names)}" + ("..." if len(glean_nodes) > 3 else "")
+                await update_pipeline_msg(glean_entities_detail, pipeline_status, pipeline_status_lock)
+            
+            # Log detailed gleaning relations (if any) - FIX: Convert tuple keys to strings
+            if glean_edges:
+                glean_edge_keys = list(glean_edges.keys())[:3]  # Show first 3 relations
+                # Convert tuple keys to readable strings
+                glean_edge_strings = [f"{key[0]} -> {key[1]}" for key in glean_edge_keys]
+                glean_relations_detail = f"🔗 精化关系: {', '.join(glean_edge_strings)}" + ("..." if len(glean_edges) > 3 else "")
+                await update_pipeline_msg(glean_relations_detail, pipeline_status, pipeline_status_lock)
 
             # Merge results - only add entities and edges with new names
             for entity_name, entities in glean_nodes.items():
@@ -1658,12 +1636,14 @@ async def extract_entities(
         processed_chunks += 1
         entities_count = len(maybe_nodes)
         relations_count = len(maybe_edges)
-        log_message = f"Chunk {processed_chunks} of {total_chunks} extracted {entities_count} Ent + {relations_count} Rel"
-        logger.info(log_message)
-        if pipeline_status is not None:
-            async with pipeline_status_lock:
-                pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+        
+        # Enhanced chunk completion summary with emoji and details
+        chunk_summary_msg = f"📝 Chunk {processed_chunks}/{total_chunks} 完成: {entities_count} 实体 + {relations_count} 关系"
+        await log_info_with_pipeline_msg(chunk_summary_msg, pipeline_status, pipeline_status_lock)
+        
+        # Call progress callback if provided
+        if progress_callback:
+            await progress_callback(processed_chunks, total_chunks)
 
         # Return the extracted nodes and edges for centralized processing
         return maybe_nodes, maybe_edges

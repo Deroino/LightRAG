@@ -1960,3 +1960,57 @@ def generate_track_id(prefix: str = "upload") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
     return f"{prefix}_{timestamp}_{unique_id}"
+
+async def log_error_with_pipeline_msg(
+    message: str,
+    pipeline_status: dict = None,
+    pipeline_status_lock=None,
+    pipeline_set_data={}
+):
+    logger.error(message)
+    await update_pipeline_msg(message, pipeline_status, pipeline_status_lock,pipeline_set_data)
+
+async def log_info_with_pipeline_msg(
+        message: str,
+        pipeline_status: dict = None,
+        pipeline_status_lock=None,
+        pipeline_set_data={},
+):
+    logger.info(message)
+    await update_pipeline_msg(message, pipeline_status, pipeline_status_lock,pipeline_set_data)
+
+async def update_pipeline_msg(
+    message: str,
+    pipeline_status: dict = None,
+    pipeline_status_lock=None,
+    pipeline_set_data = {},
+    update_latest: bool = True,
+    add_to_history: bool = True,
+):
+    """
+    Update pipeline status with a timestamped message.
+    
+    Args:
+        message: The message to add
+        pipeline_status: Pipeline status dictionary
+        pipeline_status_lock: Pipeline status lock
+        update_latest: Whether to update latest_message
+        add_to_history: Whether to add to history_messages
+    """
+    if pipeline_status is not None and pipeline_status_lock is not None:
+        # Always add timestamp to message (using Beijing timezone)
+        from datetime import datetime, timezone, timedelta
+        beijing_tz = timezone(timedelta(hours=8))
+        timestamp = datetime.now(beijing_tz).strftime("%H:%M:%S")
+        timestamped_message = f"[{timestamp}] {message}"
+            
+        async with pipeline_status_lock:
+
+            for k,v in pipeline_set_data.items():
+                pipeline_status[k] = v
+
+            if update_latest:
+                pipeline_status["latest_message"] = timestamped_message
+            if add_to_history:
+                pipeline_status["history_messages"].append(timestamped_message)
+

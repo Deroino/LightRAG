@@ -89,6 +89,9 @@ from .utils import (
     check_storage_env_vars,
     generate_track_id,
     logger,
+    update_pipeline_msg,
+    log_error_with_pipeline_msg,
+    log_info_with_pipeline_msg
 )
 from .types import KnowledgeGraph
 from dotenv import load_dotenv
@@ -1179,21 +1182,15 @@ class LightRAG:
             # Process documents until no more documents or requests
             while True:
                 if not to_process_docs:
-                    log_message = "All documents have been processed or are duplicates"
-                    logger.info(log_message)
-                    pipeline_status["latest_message"] = log_message
-                    pipeline_status["history_messages"].append(log_message)
+                    await log_info_with_pipeline_msg("All documents have been processed or are duplicates", pipeline_status, pipeline_status_lock)
                     break
-
-                log_message = f"Processing {len(to_process_docs)} document(s)"
-                logger.info(log_message)
 
                 # Update pipeline_status, batchs now represents the total number of files to be processed
                 pipeline_status["docs"] = len(to_process_docs)
                 pipeline_status["batchs"] = len(to_process_docs)
                 pipeline_status["cur_batch"] = 0
-                pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+                await log_info_with_pipeline_msg(f"Processing {len(to_process_docs)} document(s)", pipeline_status,
+                                                 pipeline_status_lock)
 
                 # Get first document's file path and total count for job name
                 first_doc_id, first_doc = next(iter(to_process_docs.items()))
@@ -1236,21 +1233,17 @@ class LightRAG:
                                 status_doc, "file_path", "unknown_source"
                             )
 
-                            async with pipeline_status_lock:
-                                # Update processed file count and save current file number
-                                processed_count += 1
-                                current_file_number = (
-                                    processed_count  # Save the current file number
-                                )
-                                pipeline_status["cur_batch"] = processed_count
 
-                                log_message = f"Extracting stage {current_file_number}/{total_files}: {file_path}"
-                                logger.info(log_message)
-                                pipeline_status["history_messages"].append(log_message)
-                                log_message = f"Processing d-id: {doc_id}"
-                                logger.info(log_message)
-                                pipeline_status["latest_message"] = log_message
-                                pipeline_status["history_messages"].append(log_message)
+                            # Update processed file count and save current file number
+                            processed_count += 1
+                            current_file_number = (
+                                processed_count  # Save the current file number
+                            )
+
+                            log_message = f"Extracting stage {processed_count}/{total_files}: {file_path}"
+                            await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock,{"cur_batch":processed_count})
+                            log_message = f"Processing d-id: {doc_id}"
+                            await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
                             # Get document content from full_docs
                             content_data = await self.full_docs.get_by_id(doc_id)
@@ -1331,33 +1324,25 @@ class LightRAG:
                             # Stage 2: Process entity relation graph (after text_chunks are saved)
                             entity_relation_task = asyncio.create_task(
                                 self._process_entity_relation_graph(
-                                    chunks, pipeline_status, pipeline_status_lock
+                                    chunks, pipeline_status, pipeline_status_lock, doc_id
                                 )
                             )
                             await entity_relation_task
                             file_extraction_stage_ok = True
 
                         except Exception as e:
-                            # Log error and update pipeline status
-                            logger.error(traceback.format_exc())
-                            error_msg = f"Failed to extract document {current_file_number}/{total_files}: {file_path}"
-                            logger.error(error_msg)
-                            async with pipeline_status_lock:
-                                pipeline_status["latest_message"] = error_msg
-                                pipeline_status["history_messages"].append(
-                                    traceback.format_exc()
-                                )
-                                pipeline_status["history_messages"].append(error_msg)
+                            await log_error_with_pipeline_msg(f"Failed to extract document {current_file_number}/{total_files}: {file_path} \n {traceback.format_exc()}",
+                                                        pipeline_status, pipeline_status_lock)
 
-                                # Cancel tasks that are not yet completed
-                                all_tasks = first_stage_tasks + (
-                                    [entity_relation_task]
-                                    if entity_relation_task
-                                    else []
-                                )
-                                for task in all_tasks:
-                                    if task and not task.done():
-                                        task.cancel()
+                            # Cancel tasks that are not yet completed
+                            all_tasks = first_stage_tasks + (
+                                [entity_relation_task]
+                                if entity_relation_task
+                                else []
+                            )
+                            for task in all_tasks:
+                                if task and not task.done():
+                                    task.cancel()
 
                             # Persistent llm cache
                             if self.llm_response_cache:
@@ -1451,16 +1436,8 @@ class LightRAG:
                             except Exception as e:
                                 # Log error and update pipeline status
                                 logger.error(traceback.format_exc())
-                                error_msg = f"Merging stage failed in document {current_file_number}/{total_files}: {file_path}"
-                                logger.error(error_msg)
-                                async with pipeline_status_lock:
-                                    pipeline_status["latest_message"] = error_msg
-                                    pipeline_status["history_messages"].append(
-                                        traceback.format_exc()
-                                    )
-                                    pipeline_status["history_messages"].append(
-                                        error_msg
-                                    )
+                                error_msg = f"Merging stage failed in document {current_file_number}/{total_files}: {file_path} \n {traceback.format_exc()}"
+                                await log_error_with_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
 
                                 # Persistent llm cache
                                 if self.llm_response_cache:
@@ -1537,17 +1514,27 @@ class LightRAG:
 
         finally:
             log_message = "Document processing pipeline completed"
-            logger.info(log_message)
-            # Always reset busy status when done or if an exception occurs (with lock)
-            async with pipeline_status_lock:
-                pipeline_status["busy"] = False
-                pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+            await update_pipeline_msg(log_message, pipeline_status, pipeline_status_lock,{'busy':False})
 
     async def _process_entity_relation_graph(
-        self, chunk: dict[str, Any], pipeline_status=None, pipeline_status_lock=None
+        self, chunk: dict[str, Any], pipeline_status=None, pipeline_status_lock=None, doc_id: str = None
     ) -> list:
         try:
+            # Create progress callback to update chunks_processed
+            async def progress_callback(processed_chunks: int, total_chunks: int):
+                if doc_id:
+                    # Get current document status
+                    current_status = await self.doc_status.get_by_id(doc_id)
+                    if current_status:
+                        # Update chunks_processed field
+                        await self.doc_status.upsert({
+                            doc_id: {
+                                **current_status,
+                                "chunks_processed": processed_chunks,
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        })
+            
             chunk_results = await extract_entities(
                 chunk,
                 global_config=asdict(self),
@@ -1555,14 +1542,12 @@ class LightRAG:
                 pipeline_status_lock=pipeline_status_lock,
                 llm_response_cache=self.llm_response_cache,
                 text_chunks_storage=self.text_chunks,
+                progress_callback=progress_callback,
             )
             return chunk_results
         except Exception as e:
             error_msg = f"Failed to extract entities and relationships: {str(e)}"
-            logger.error(error_msg)
-            async with pipeline_status_lock:
-                pipeline_status["latest_message"] = error_msg
-                pipeline_status["history_messages"].append(error_msg)
+            await log_error_with_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
             raise e
 
     async def _insert_done(
@@ -1587,12 +1572,7 @@ class LightRAG:
         await asyncio.gather(*tasks)
 
         log_message = "In memory DB persist to disk"
-        logger.info(log_message)
-
-        if pipeline_status is not None and pipeline_status_lock is not None:
-            async with pipeline_status_lock:
-                pipeline_status["latest_message"] = log_message
-                pipeline_status["history_messages"].append(log_message)
+        await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
     def insert_custom_kg(
         self, custom_kg: dict[str, Any], full_doc_id: str = None
@@ -2067,11 +2047,8 @@ class LightRAG:
         pipeline_status = await get_namespace_data("pipeline_status")
         pipeline_status_lock = get_pipeline_status_lock()
 
-        async with pipeline_status_lock:
-            log_message = f"Starting deletion process for document {doc_id}"
-            logger.info(log_message)
-            pipeline_status["latest_message"] = log_message
-            pipeline_status["history_messages"].append(log_message)
+        log_message = f"Starting deletion process for document {doc_id}"
+        await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
         try:
             # 1. Get the document status and related data
@@ -2105,13 +2082,11 @@ class LightRAG:
                     )
                     raise Exception(f"Failed to delete document entry: {e}") from e
 
-                async with pipeline_status_lock:
-                    log_message = (
-                        f"Document {doc_id} is deleted without associated chunks."
-                    )
-                    logger.info(log_message)
-                    pipeline_status["latest_message"] = log_message
-                    pipeline_status["history_messages"].append(log_message)
+
+                log_message = (
+                    f"Document {doc_id} is deleted without associated chunks."
+                )
+                log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
                 return DeletionResult(
                     status="success",
@@ -2200,13 +2175,10 @@ class LightRAG:
                             elif remaining_sources != sources:
                                 entities_to_rebuild[node_label] = remaining_sources
 
-                    async with pipeline_status_lock:
-                        log_message = (
-                            f"Found {len(entities_to_rebuild)} affected entities"
-                        )
-                        logger.info(log_message)
-                        pipeline_status["latest_message"] = log_message
-                        pipeline_status["history_messages"].append(log_message)
+                    log_message = (
+                        f"Found {len(entities_to_rebuild)} affected entities"
+                    )
+                    log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
                     # Process relationships
                     for edge_data in affected_edges:
@@ -2229,16 +2201,12 @@ class LightRAG:
                             elif remaining_sources != sources:
                                 relationships_to_rebuild[edge_tuple] = remaining_sources
 
-                    async with pipeline_status_lock:
-                        log_message = (
-                            f"Found {len(relationships_to_rebuild)} affected relations"
-                        )
-                        logger.info(log_message)
-                        pipeline_status["latest_message"] = log_message
-                        pipeline_status["history_messages"].append(log_message)
+                    await log_info_with_pipeline_msg(f"Found {len(relationships_to_rebuild)} affected relations",
+                                                         pipeline_status, pipeline_status_lock)
 
                 except Exception as e:
-                    logger.error(f"Failed to process graph analysis results: {e}")
+                    await log_info_with_pipeline_msg(f"Failed to process graph analysis results: {e}",
+                                                     pipeline_status, pipeline_status_lock)
                     raise Exception(f"Failed to process graph dependencies: {e}") from e
 
                 # 5. Delete chunks from storage
@@ -2247,11 +2215,8 @@ class LightRAG:
                         await self.chunks_vdb.delete(chunk_ids)
                         await self.text_chunks.delete(chunk_ids)
 
-                        async with pipeline_status_lock:
-                            log_message = f"Successfully deleted {len(chunk_ids)} chunks from storage"
-                            logger.info(log_message)
-                            pipeline_status["latest_message"] = log_message
-                            pipeline_status["history_messages"].append(log_message)
+                        log_message = f"Successfully deleted {len(chunk_ids)} chunks from storage"
+                        log_info_with_pipeline_msg(log_message,pipeline_status,pipeline_status_lock)
 
                     except Exception as e:
                         logger.error(f"Failed to delete chunks: {e}")
@@ -2272,14 +2237,14 @@ class LightRAG:
                             list(entities_to_delete)
                         )
 
-                        async with pipeline_status_lock:
-                            log_message = f"Successfully deleted {len(entities_to_delete)} entities"
-                            logger.info(log_message)
-                            pipeline_status["latest_message"] = log_message
-                            pipeline_status["history_messages"].append(log_message)
+                        await log_info_with_pipeline_msg(
+                            f"Successfully deleted {len(entities_to_delete)} entities",
+                            pipeline_status, pipeline_status_lock)
 
                     except Exception as e:
-                        logger.error(f"Failed to delete entities: {e}")
+                        await log_error_with_pipeline_msg(
+                            f"Failed to delete entities: {e}",
+                            pipeline_status, pipeline_status_lock)
                         raise Exception(f"Failed to delete entities: {e}") from e
 
                 # 7. Delete relationships that have no remaining sources
@@ -2301,11 +2266,10 @@ class LightRAG:
                             list(relationships_to_delete)
                         )
 
-                        async with pipeline_status_lock:
-                            log_message = f"Successfully deleted {len(relationships_to_delete)} relations"
-                            logger.info(log_message)
-                            pipeline_status["latest_message"] = log_message
-                            pipeline_status["history_messages"].append(log_message)
+
+                        await log_info_with_pipeline_msg(
+                            f"Successfully deleted {len(relationships_to_delete)} relations",
+                            pipeline_status, pipeline_status_lock)
 
                     except Exception as e:
                         logger.error(f"Failed to delete relationships: {e}")
