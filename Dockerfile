@@ -1,68 +1,71 @@
-# Build stage
-FROM python:3.11-slim AS builder
+# ---- Frontend Build Stage ----
+FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app
 
-# Install Node.js, Rust and required build dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    build-essential \
-    pkg-config \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
-    && . $HOME/.cargo/env
+# 复制前端项目和构建脚本
+COPY ./lightrag_webui/package.json ./lightrag_webui/package-lock.json ./
+RUN npm install
 
-# Copy pyproject.toml and source code for dependency installation
-COPY pyproject.toml .
-COPY setup.py .
-COPY lightrag/ ./lightrag/
+COPY ./lightrag_webui ./
+COPY ./webui_build.sh ./
 
-# Install dependencies
+# 执行前端构建
+RUN chmod +x ./webui_build.sh && ./webui_build.sh
+
+# ---- Python Build Stage ----
+FROM python:3.11-alpine AS python-builder
+
+# 安装 Python 相关的构建依赖
+RUN apk add --no-cache curl build-base pkgconfig rustup
+RUN rustup-init -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN pip install --user --no-cache-dir .
-RUN pip install --user --no-cache-dir .[api]
-
-# Install depndencies for default storage
-RUN pip install --user --no-cache-dir nano-vectordb networkx
-# Install depndencies for default LLM
-RUN pip install --user --no-cache-dir openai ollama tiktoken
-# Install depndencies for default document loader
-RUN pip install --user --no-cache-dir pypdf2 python-docx python-pptx openpyxl
-
-# Copy WebUI source code and build frontend
-COPY lightrag_webui ./lightrag_webui
-COPY lightrag ./lightrag
-
-# Build WebUI
-RUN cd lightrag_webui \
-    && npm install \
-    && npm run build-no-bun
-
-# Final stage
-FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy only necessary files from builder
-COPY --from=builder /root/.local /root/.local
-COPY --from=builder /app/lightrag ./lightrag
+COPY requirements.txt .
+COPY lightrag/api/requirements.txt ./lightrag/api/
+
+# 安装 Python 依赖
+RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --user --no-cache-dir -r lightrag/api/requirements.txt
+RUN pip install --user --no-cache-dir \
+    nano-vectordb networkx openai ollama tiktoken \
+    pypdf2 python-docx python-pptx openpyxl
+
+# ---- Final Stage ----
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+# 设置时区和安装 Playwright 依赖
+RUN apk add --no-cache tzdata && \
+    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    apk del tzdata
+RUN apk add --no-cache \
+    nss eudev libxss libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
+    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run
+
+# 从 Python 构建阶段复制依赖
+COPY --from=python-builder /root/.local /root/.local
+ENV PATH="/root/.local/bin:${PATH}"
+
+# 复制后端代码
+COPY ./lightrag ./lightrag
 COPY setup.py .
 
-RUN pip install ".[api]"
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+# 从前端构建阶段复制构建好的UI
+COPY --from=frontend-builder /app/lightrag/api/webui /app/lightrag/api/webui
 
-# Create necessary directories
+# 安装项目
+RUN pip install --no-cache-dir ".[api]"
+
+# 创建数据目录
 RUN mkdir -p /app/data/rag_storage /app/data/inputs
-
-# Docker data directories
 ENV WORKING_DIR=/app/data/rag_storage
 ENV INPUT_DIR=/app/data/inputs
 
-# Expose the default port
 EXPOSE 9621
 
-# Set entrypoint
 ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
