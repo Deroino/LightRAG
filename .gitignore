@@ -83,3 +83,6 @@ yarn.lock
 # Process and log files
 nohup.out
 auto-test-fix.log
+
+# Documentation
+doc/
