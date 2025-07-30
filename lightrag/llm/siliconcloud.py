@@ -213,7 +213,10 @@ async def siliconcloud_complete_if_cache(
     logger.debug("===== Sending Query to SiliconCloud LLM =====")
 
     try:
-        timeout = aiohttp.ClientTimeout(total=kwargs.get("timeout", 300))
+        timeout_value = kwargs.get(
+            "timeout", kwargs.get("global_config", {}).get("llm_model_timeout", 600)
+        )
+        timeout = aiohttp.ClientTimeout(total=timeout_value)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(base_url, headers=headers, json=payload) as response:
                 if response.status != 200:

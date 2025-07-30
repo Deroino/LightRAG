@@ -289,6 +289,9 @@ class LightRAG:
     )
     """Maximum number of concurrent LLM calls."""
 
+    llm_model_timeout: int = field(default=int(os.getenv("LLM_MODEL_TIMEOUT", 600)))
+    """Timeout for LLM model calls in seconds."""
+
     llm_model_kwargs: dict[str, Any] = field(default_factory=dict)
     """Additional keyword arguments passed to the LLM model function."""
 
