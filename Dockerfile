@@ -31,14 +31,10 @@ RUN pip install --user --no-cache-dir openai ollama tiktoken
 # Install depndencies for default document loader
 RUN pip install --user --no-cache-dir pypdf2 python-docx python-pptx openpyxl
 
-# Copy WebUI source code and build frontend
+# Copy WebUI source code and build frontend using our script
 COPY lightrag_webui ./lightrag_webui
-COPY lightrag ./lightrag
-
-# Build WebUI
-RUN cd lightrag_webui \
-    && npm install \
-    && npm run build-no-bun
+COPY webui_build.sh ./
+RUN chmod +x ./webui_build.sh && ./webui_build.sh
 
 # Final stage
 FROM python:3.11-slim
