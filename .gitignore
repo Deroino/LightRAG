@@ -77,7 +77,6 @@ lightrag_webui/build/
 lightrag_webui/dist/
 lightrag_webui/assets/
 node_modules/
-package-lock.json
 yarn.lock
 
 # Process and log files
