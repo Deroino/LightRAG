@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # LightRAG WebUI 构建脚本
 # 用于重新打包前端项目
