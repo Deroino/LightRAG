@@ -8,6 +8,7 @@ COPY ./lightrag_webui/package.json ./lightrag_webui/package-lock.json ./
 RUN npm install
 
 COPY ./lightrag_webui ./
+RUN ls -la
 COPY ./webui_build.sh ./
 
 # 执行前端构建
