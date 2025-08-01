@@ -45,7 +45,7 @@ RUN apk add --no-cache tzdata && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apk del tzdata
 RUN apk add --no-cache \
-    nss eudev libxss libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
+    nss eudev libxscrnsaver libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
     libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run
 
 # 从 Python 构建阶段复制依赖
