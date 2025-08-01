@@ -4,11 +4,12 @@ FROM node:18-alpine AS frontend-builder
 WORKDIR /app
 
 # 复制前端项目和构建脚本
-COPY ./lightrag_webui/package.json ./lightrag_webui/package-lock.json ./
-RUN npm install
+RUN mkdir -p /app/lightrag_webui
+COPY ./lightrag_webui/package.json ./lightrag_webui/package-lock.json /app/lightrag_webui/
+COPY ./lightrag_webui/ /app/lightrag_webui/
+RUN cd /app/lightrag_webui && npm install
 
 COPY ./webui_build.sh ./
-COPY ./lightrag_webui ./
 
 # 执行前端构建
 RUN chmod +x ./webui_build.sh && ./webui_build.sh
