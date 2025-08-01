@@ -7,10 +7,11 @@ WORKDIR /app
 COPY ./lightrag_webui/package.json ./lightrag_webui/package-lock.json ./
 RUN npm install
 
+COPY ./webui_build.sh ./
 COPY ./lightrag_webui ./
-RUN ls -la
+
 # 执行前端构建
-RUN ls -la . && chmod +x ./webui_build.sh && ./webui_build.sh
+RUN chmod +x ./webui_build.sh && ./webui_build.sh
 
 # ---- Python Build Stage ----
 FROM python:3.11-alpine AS python-builder
