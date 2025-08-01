@@ -489,6 +489,8 @@ def create_app(args):
             rag,
             doc_manager,
             api_key,
+            enable_scheduler=not args.disable_scheduler,
+            scheduler_interval_minutes=args.scheduler_interval_minutes,
         )
     )
     app.include_router(create_query_routes(rag, api_key, args.top_k))

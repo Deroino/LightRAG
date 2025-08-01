@@ -3,6 +3,8 @@ This module contains all document-related routes for the LightRAG API.
 """
 
 import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from pyuca import Collator
 from lightrag.utils import logger
 import aiofiles
@@ -1224,7 +1226,9 @@ async def background_delete_documents(
 
 
 def create_document_routes(
-    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None
+    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None,
+    enable_scheduler: bool = False,
+    scheduler_interval_minutes: int = 60
 ):
     # Create combined auth dependency for document routes
     combined_auth = get_combined_auth_dependency(api_key)
@@ -2191,4 +2195,55 @@ def create_document_routes(
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=str(e))
 
+    # Add a scheduler to retry failed documents
+    if enable_scheduler:
+        logger.info(f"Scheduler enabled, setting up retry for failed documents every {scheduler_interval_minutes} minutes")
+        setup_retry_failed_scheduler(rag, scheduler_interval_minutes)
+
     return router
+
+
+def setup_retry_failed_scheduler(rag: LightRAG, interval_minutes: int):
+    """Set up a scheduler to retry failed documents periodically."""
+    scheduler = AsyncIOScheduler()
+
+    async def retry_job():
+        logger.info("Scheduler triggered: Retrying failed documents...")
+        try:
+            # Similar logic from the retry_failed_documents endpoint
+            from lightrag.kg.shared_storage import get_pipeline_status_lock, get_namespace_data
+            
+            pipeline_status = await get_namespace_data("pipeline_status")
+            pipeline_status_lock = get_pipeline_status_lock()
+            
+            async with pipeline_status_lock:
+                if pipeline_status.get("busy", False):
+                    logger.info("Scheduler: Pipeline is busy, skipping retry this time.")
+                    return
+                
+                failed_docs = await rag.get_docs_by_status(DocStatus.FAILED)
+                if not failed_docs:
+                    logger.info("Scheduler: No failed documents to retry.")
+                    return
+                
+                pipeline_status.update({
+                    "request_pending": True,
+                    "latest_message": f"Scheduler: Retrying {len(failed_docs)} failed documents"
+                })
+
+            await rag.apipeline_process_enqueue_documents()
+            logger.info(f"Scheduler: Successfully initiated retry for {len(failed_docs)} documents.")
+
+        except Exception as e:
+            logger.error(f"Scheduler: Error during retry job: {e}")
+            logger.error(traceback.format_exc())
+
+    scheduler.add_job(
+        retry_job,
+        trigger=IntervalTrigger(minutes=interval_minutes),
+        id="retry_failed_documents_job",
+        name="Retry Failed Documents",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info(f"Scheduler started to retry failed documents every {interval_minutes} minutes.")
