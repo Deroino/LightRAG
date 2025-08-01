@@ -9,10 +9,8 @@ RUN npm install
 
 COPY ./lightrag_webui ./
 RUN ls -la
-COPY ./webui_build.sh ./
-
 # 执行前端构建
-RUN chmod +x ./webui_build.sh && ./webui_build.sh
+RUN ls -la . && chmod +x ./webui_build.sh && ./webui_build.sh
 
 # ---- Python Build Stage ----
 FROM python:3.11-alpine AS python-builder
