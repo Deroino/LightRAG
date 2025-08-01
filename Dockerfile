@@ -23,12 +23,13 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-COPY requirements.txt .
-COPY lightrag/api/requirements.txt ./lightrag/api/
+# The following lines are removed because dependencies are handled by setup.py
+# COPY requirements.txt .
+# COPY lightrag/api/requirements.txt ./lightrag/api/
+# RUN pip install --user --no-cache-dir -r requirements.txt
+# RUN pip install --user --no-cache-dir -r lightrag/api/requirements.txt
 
-# 安装 Python 依赖
-RUN pip install --user --no-cache-dir -r requirements.txt
-RUN pip install --user --no-cache-dir -r lightrag/api/requirements.txt
+# Install some base packages that are frequently used
 RUN pip install --user --no-cache-dir \
     nano-vectordb networkx openai ollama tiktoken \
     pypdf2 python-docx python-pptx openpyxl
