@@ -51,6 +51,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 
 # 复制后端代码
 COPY ./lightrag ./lightrag
+COPY pyproject.toml .
 COPY setup.py .
 
 # 从前端构建阶段复制构建好的UI
