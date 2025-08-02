@@ -1415,6 +1415,20 @@ def remove_think_tags(text: str) -> str:
     return re.sub(r"^(<think>.*?</think>|<think>)", "", text, flags=re.DOTALL).strip()
 
 
+def locate_json_string_body_from_string(text: str) -> str:
+    """
+    Locate and extract the JSON string body from a string.
+    Finds the first '{' and the last '}' and returns the content in between.
+    """
+    try:
+        start_index = text.index("{")
+        end_index = text.rindex("}") + 1
+        return text[start_index:end_index]
+    except ValueError:
+        logger.error(f"Could not locate JSON string body in text: {text}")
+        return text
+
+
 async def use_llm_func_with_cache(
     input_text: str,
     use_llm_func: callable,
