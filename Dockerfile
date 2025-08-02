@@ -43,7 +43,7 @@ FROM python:3.11-alpine
 WORKDIR /app
 
 # 设置时区并安装 *仅运行时* 需要的系统依赖
-RUN apk add --no-cache tzdata libpq openssl && \
+RUN apk add --no-cache tzdata libgcc libpq openssl && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apk del tzdata
