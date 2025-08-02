@@ -58,7 +58,7 @@ COPY setup.py .
 COPY --from=frontend-builder /app/lightrag/api/webui /app/lightrag/api/webui
 
 # 安装项目
-RUN pip install --no-cache-dir ".[api]"
+RUN pip install --no-cache-dir --break-system-packages ".[api]"
 
 # 创建数据目录
 RUN mkdir -p /app/data/rag_storage /app/data/inputs
