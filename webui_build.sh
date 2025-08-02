@@ -34,7 +34,7 @@ else
 fi
 
 echo "📦 正在安装依赖..."
-if ! npm install; then
+if ! sudo npm install; then
     echo "❌ 依赖安装失败"
     exit 1
 fi
@@ -45,7 +45,7 @@ BUILD_SUCCESS=false
 
 if command -v bunx >/dev/null 2>&1; then
     echo "检测到 bun，使用 bun 构建..."
-    if npm run build; then
+    if sudo npm run build; then
         BUILD_SUCCESS=true
     else
         echo "⚠️  bun 构建失败，尝试使用 vite..."
@@ -54,7 +54,7 @@ fi
 
 if [ "$BUILD_SUCCESS" = false ]; then
     echo "使用 vite 构建..."
-    if npm run build-no-bun; then
+    if sudo npm run build-no-bun; then
         BUILD_SUCCESS=true
     else
         echo "❌ vite 构建也失败了"

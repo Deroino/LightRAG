@@ -39,7 +39,7 @@ echo
 echo ">>> 第二步：构建前端项目"
 if [ -f "./webui_build.sh" ]; then
     echo "正在执行 webui_build.sh..."
-    chmod +x ./webui_build.sh
+    sudo chmod +x ./webui_build.sh
     ./webui_build.sh
     echo "✅ 前端构建完成"
 else
@@ -48,13 +48,24 @@ else
 fi
 echo
 
+echo
+# 新增：安装 Python 依赖
+echo ">>> 新增步骤：安装 Python 依赖"
+if [ -f "requirements.txt" ]; then
+    echo "正在从 requirements.txt 安装依赖..."
+    pip3 install -r requirements.txt
+    echo "✅ Python 依赖安装完成"
+else
+    echo "⚠️  警告：找不到 requirements.txt 文件，跳过依赖安装"
+fi
+
 # 第三步：非阻塞启动 lightrag-server
 echo ">>> 第三步：启动 lightrag-server 服务"
-if command -v lightrag-server >/dev/null 2>&1; then
+if [ -f "lightrag/api/lightrag_server.py" ]; then
     echo "正在启动 lightrag-server..."
     
     # 使用 nohup 非阻塞启动，日志重定向到 auto-test-fix.log
-    nohup lightrag-server > auto-test-fix.log 2>&1 &
+    nohup python3 -m lightrag.api.lightrag_server > auto-test-fix.log 2>&1 &
     SERVER_PID=$!
     
     echo "✅ lightrag-server 已启动"
@@ -63,8 +74,7 @@ if command -v lightrag-server >/dev/null 2>&1; then
     echo "可以使用以下命令查看日志:"
     echo "  tail -f auto-test-fix.log"
 else
-    echo "❌ 错误：找不到 lightrag-server 命令"
-    echo "请确保已安装 lightrag 包: pip install lightrag"
+    echo "❌ 错误：找不到 lightrag/api/lightrag_server.py 文件"
     exit 1
 fi
 

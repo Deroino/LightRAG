@@ -3,7 +3,7 @@ This module contains all document-related routes for the LightRAG API.
 """
 
 import asyncio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from pyuca import Collator
 from lightrag.utils import logger
@@ -2205,7 +2205,7 @@ def create_document_routes(
 
 def setup_retry_failed_scheduler(rag: LightRAG, interval_minutes: int):
     """Set up a scheduler to retry failed documents periodically."""
-    scheduler = AsyncIOScheduler()
+    scheduler = BackgroundScheduler()
 
     async def retry_job():
         logger.info("Scheduler triggered: Retrying failed documents...")

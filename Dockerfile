@@ -7,6 +7,8 @@ WORKDIR /app
 COPY ./lightrag_webui ./lightrag_webui/
 COPY ./webui_build.sh ./
 
+# 移除脚本中的 sudo 命令，因为它在 docker build 环境中是不需要的
+RUN sed -i 's/sudo //g' ./webui_build.sh
 # 执行前端构建
 RUN chmod +x ./webui_build.sh && ./webui_build.sh
 

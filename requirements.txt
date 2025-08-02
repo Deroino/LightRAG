@@ -1,0 +1,7 @@
+lightrag
+json_repair
+pipmaster
+pyuca
+aiofiles
+nano_vectordb
+networkx
