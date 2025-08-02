@@ -25,7 +25,9 @@ COPY ./lightrag ./lightrag
 COPY pyproject.toml .
 COPY setup.py .
 
-# 在拥有完整编译工具的环境中，彻底安装所有 Python 依赖
+# Pre-install numpy, as it is a build-time dependency for other packages
+RUN pip install --no-cache-dir --break-system-packages numpy
+# Now, install the rest of the project dependencies
 RUN pip install --no-cache-dir --break-system-packages ".[api]"
 
 # ---- Final Stage ----
