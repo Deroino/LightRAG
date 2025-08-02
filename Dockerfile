@@ -13,52 +13,47 @@ RUN chmod +x ./webui_build.sh && ./webui_build.sh
 # ---- Python Build Stage ----
 FROM python:3.11-alpine AS python-builder
 
-# 安装 Python 相关的构建依赖
-RUN apk add --no-cache curl build-base pkgconfig rustup
+# 安装 Python 相关的构建依赖，以及所有编译时需要的系统库
+RUN apk add --no-cache curl build-base pkgconfig rustup libpcap-dev libxml2-dev libxslt-dev
 RUN rustup-init -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-# The following lines are removed because dependencies are handled by setup.py
-# COPY requirements.txt .
-# COPY lightrag/api/requirements.txt ./lightrag/api/
-# RUN pip install --user --no-cache-dir -r requirements.txt
-# RUN pip install --user --no-cache-dir -r lightrag/api/requirements.txt
+# 复制所有后端代码和配置文件
+COPY ./lightrag ./lightrag
+COPY pyproject.toml .
+COPY setup.py .
 
-# Install some base packages that are frequently used
-RUN pip install --user --no-cache-dir \
-    nano-vectordb networkx openai ollama tiktoken \
-    pypdf2 python-docx python-pptx openpyxl
+# 在拥有完整编译工具的环境中，彻底安装所有 Python 依赖
+RUN pip install --no-cache-dir --break-system-packages ".[api]"
 
 # ---- Final Stage ----
 FROM python:3.11-alpine
 
 WORKDIR /app
 
-# 设置时区和安装 Playwright 依赖
+# 设置时区并安装 *仅运行时* 需要的系统依赖
 RUN apk add --no-cache tzdata && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apk del tzdata
 RUN apk add --no-cache \
     nss eudev libxscrnsaver libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
-    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run libpcap-dev libxml2-dev libxslt-dev
+    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run libpcap
 
-# 从 Python 构建阶段复制依赖
+# 从 Python 构建阶段复制已经安装好的、完整的 Python 环境
 COPY --from=python-builder /root/.local /root/.local
 ENV PATH="/root/.local/bin:${PATH}"
 
-# 复制后端代码
-COPY ./lightrag ./lightrag
-COPY pyproject.toml .
-COPY setup.py .
+# 从 Python 构建阶段复制项目代码
+COPY --from=python-builder /app/lightrag /app/lightrag
+COPY --from=python-builder /app/setup.py /app/
+COPY --from=python-builder /app/pyproject.toml /app/
+
 
 # 从前端构建阶段复制构建好的UI
 COPY --from=frontend-builder /app/lightrag/api/webui /app/lightrag/api/webui
-
-# 安装项目
-RUN pip install --no-cache-dir --break-system-packages ".[api]"
 
 # 创建数据目录
 RUN mkdir -p /app/data/rag_storage /app/data/inputs
