@@ -1060,6 +1060,8 @@ class LightRAG:
                     async with semaphore:
                         nonlocal processed_count
                         current_file_number = 0
+                        first_stage_tasks = []
+                        entity_relation_task = None
                         try:
                             # Get file path from status document
                             file_path = getattr(
@@ -1973,7 +1975,7 @@ class LightRAG:
                     log_message = (
                         f"Found {len(entities_to_rebuild)} affected entities"
                     )
-                    log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
+                    await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
                     # Process relationships
                     for edge_data in affected_edges:
@@ -2011,7 +2013,7 @@ class LightRAG:
                         await self.text_chunks.delete(chunk_ids)
 
                         log_message = f"Successfully deleted {len(chunk_ids)} chunks from storage"
-                        log_info_with_pipeline_msg(log_message,pipeline_status,pipeline_status_lock)
+                        await log_info_with_pipeline_msg(log_message,pipeline_status,pipeline_status_lock)
 
                     except Exception as e:
                         logger.error(f"Failed to delete chunks: {e}")
