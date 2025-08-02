@@ -14,7 +14,7 @@ RUN chmod +x ./webui_build.sh && ./webui_build.sh
 FROM python:3.11-alpine AS python-builder
 
 # 安装 Python 相关的构建依赖，以及所有编译时需要的系统库
-RUN apk add --no-cache curl build-base pkgconfig rustup libpcap-dev libxml2-dev libxslt-dev cmake ninja
+RUN apk add --no-cache curl build-base pkgconfig rustup libpcap-dev libxml2-dev libxslt-dev cmake ninja libpq-dev openssl-dev libffi-dev
 RUN rustup-init -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
@@ -42,7 +42,7 @@ RUN apk add --no-cache tzdata && \
     apk del tzdata
 RUN apk add --no-cache \
     nss eudev libxscrnsaver libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
-    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run libpcap
+    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run libpcap libpq openssl
 
 # 从 Python 构建阶段复制已经安装好的、完整的 Python 环境
 COPY --from=python-builder /root/.local /root/.local
