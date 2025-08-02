@@ -43,7 +43,7 @@ RUN apk add --no-cache tzdata && \
     apk del tzdata
 RUN apk add --no-cache \
     nss eudev libxscrnsaver libxtst ttf-freefont gtk+3.0 gdk-pixbuf libdrm \
-    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run
+    libxkbcommon libxcomposite libxdamage libxrandr alsa-lib at-spi2-core xvfb-run libpcap-dev
 
 # 从 Python 构建阶段复制依赖
 COPY --from=python-builder /root/.local /root/.local
