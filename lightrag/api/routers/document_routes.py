@@ -2238,8 +2238,17 @@ def setup_retry_failed_scheduler(rag: LightRAG, interval_minutes: int):
             logger.error(f"Scheduler: Error during retry job: {e}")
             logger.error(traceback.format_exc())
 
+
+    def run_async_job():
+        """Helper to run an async job in a sync context."""
+        try:
+            asyncio.run(retry_job())
+        except Exception as e:
+            logger.error(f"Scheduler: Error running async retry job: {e}")
+            logger.error(traceback.format_exc())
+
     scheduler.add_job(
-        retry_job,
+        run_async_job,
         trigger=IntervalTrigger(minutes=interval_minutes),
         id="retry_failed_documents_job",
         name="Retry Failed Documents",
