@@ -69,4 +69,4 @@ ENV INPUT_DIR=/app/data/inputs
 
 EXPOSE 9621
 
-ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
+ENTRYPOINT ["sh", "-c", "pip list && echo '---TIKTOKEN SEARCH---' && find / -name '*tiktoken*' && echo '---STARTING SERVER---' && python -m lightrag.api.lightrag_server"]
