@@ -14,7 +14,7 @@ RUN chmod +x ./webui_build.sh && ./webui_build.sh
 FROM python:3.11-alpine AS python-builder
 
 # 安装 Python 相关的构建依赖，以及所有编译时需要的系统库
-RUN apk add --no-cache curl build-base pkgconfig rustup libpcap-dev libxml2-dev libxslt-dev
+RUN apk add --no-cache curl build-base pkgconfig rustup libpcap-dev libxml2-dev libxslt-dev cmake ninja
 RUN rustup-init -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
