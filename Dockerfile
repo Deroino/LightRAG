@@ -48,8 +48,8 @@ RUN apk add --no-cache tzdata libpq openssl && \
 
 # 定义包目录并将其添加到环境变量
 ENV PACKAGES_DIR=/app/packages
-ENV PYTHONPATH ${PACKAGES_DIR}
-ENV PATH ${PACKAGES_DIR}/bin:${PATH}
+ENV PYTHONPATH=${PACKAGES_DIR}
+ENV PATH=${PACKAGES_DIR}/bin:${PATH}
 
 # 从构建阶段复制已安装好的、独立的依赖包目录
 COPY --from=python-builder ${PACKAGES_DIR} ${PACKAGES_DIR}
@@ -69,4 +69,4 @@ ENV INPUT_DIR=/app/data/inputs
 
 EXPOSE 9621
 
-ENTRYPOINT ["sh", "-c", "pip list && echo '---TIKTOKEN SEARCH---' && find / -name '*tiktoken*' && echo '---STARTING SERVER---' && python -m lightrag.api.lightrag_server"]
+ENTRYPOINT ["python", "-m", "lightrag.api.lightrag_server"]
