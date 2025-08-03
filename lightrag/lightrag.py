@@ -1103,15 +1103,18 @@ class LightRAG:
             logger.info("No new unique documents were found.")
             return
 
-        # 5. Store document content in full_docs and status in doc_status
+        # 5. Store document content in full_docs and then status in doc_status to ensure atomicity
         # Store full document content separately
         full_docs_data = {
             doc_id: {"content": contents[doc_id]["content"]}
             for doc_id in new_docs.keys()
         }
+        # First, save the document content
         await self.full_docs.upsert(full_docs_data)
+        # Ensure it is persisted to disk before updating the status
+        await self.full_docs.index_done_callback()
 
-        # Store document status (without content)
+        # Then, store the document status
         await self.doc_status.upsert(new_docs)
         logger.info(f"Stored {len(new_docs)} new unique documents")
 
@@ -1247,10 +1250,26 @@ class LightRAG:
 
                             # Get document content from full_docs
                             content_data = await self.full_docs.get_by_id(doc_id)
-                            if not content_data:
-                                raise Exception(
-                                    f"Document content not found in full_docs for doc_id: {doc_id}"
+                            if not content_data or "content" not in content_data:
+                                error_msg = f"Document content for doc_id '{doc_id}' not found in full_docs. Marking as FAILED."
+                                logger.error(error_msg)
+                                # Update status to FAILED and return
+                                await self.doc_status.upsert(
+                                    {
+                                        doc_id: {
+                                            "status": DocStatus.FAILED,
+                                            "error_msg": "Document content not found upon processing.",
+                                            "content_summary": status_doc.content_summary,
+                                            "content_length": status_doc.content_length,
+                                            "created_at": status_doc.created_at,
+                                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                                            "file_path": file_path,
+                                            "track_id": status_doc.track_id,
+                                        }
+                                    }
                                 )
+                                return  # Exit the processing for this document
+
                             content = content_data["content"]
 
                             # Generate chunks from document
@@ -1272,7 +1291,22 @@ class LightRAG:
                             }
 
                             if not chunks:
-                                logger.warning("No document chunks to process")
+                                logger.warning(f"No document chunks to process for doc_id: {doc_id}. Marking as FAILED.")
+                                await self.doc_status.upsert(
+                                    {
+                                        doc_id: {
+                                            "status": DocStatus.FAILED,
+                                            "error_msg": "No chunks could be generated from the document content.",
+                                            "content_summary": status_doc.content_summary,
+                                            "content_length": status_doc.content_length,
+                                            "created_at": status_doc.created_at,
+                                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                                            "file_path": file_path,
+                                            "track_id": status_doc.track_id,
+                                        }
+                                    }
+                                )
+                                return
 
                             # Record processing start time
                             processing_start_time = int(time.time())
