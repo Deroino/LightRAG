@@ -229,6 +229,9 @@ async def siliconcloud_complete_if_cache(
                 # 强制使用非流式响应，因为LightRAG缓存系统不支持AsyncIterator
                 return await _handle_non_streaming_response(response, token_tracker, keyword_extraction)
 
+    except asyncio.TimeoutError:
+        logger.error(f"SiliconCloud API Call Timed out after {timeout_value} seconds")
+        raise InvalidResponseError("API call timed out")
     except aiohttp.ClientError as e:
         logger.error(f"SiliconCloud API Connection Error: {e} \n {traceback.format_exc()}")
         raise Exception(f"Connection failed: {e}")
