@@ -1515,8 +1515,23 @@ class LightRAG:
                         )
                     )
 
-                # Wait for all document processing to complete
-                await asyncio.gather(*doc_tasks)
+                # Wait for all document processing to complete with robust error handling
+                results = await asyncio.gather(*doc_tasks, return_exceptions=True)
+                
+                # 检查和处理失败的文档
+                failed_count = 0
+                for task, doc_id in zip(results, to_process_docs.keys()):
+                    if isinstance(task, Exception):
+                        failed_count += 1
+                        error_msg = f"Document {doc_id} failed with error: {str(task)}"
+                        await log_error_with_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
+                
+                if failed_count > 0:
+                    logger.warning(f"{failed_count} documents failed to process")
+                    # 更新管道状态最后的消息
+                    if failed_count < len(to_process_docs):
+                        log_message = f"Partial completion: {len(to_process_docs) - failed_count}/{len(to_process_docs)} documents processed successfully"
+                        await log_info_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
 
                 # Check if there's a pending request to process more documents (with lock)
                 has_pending_request = False
@@ -1546,9 +1561,35 @@ class LightRAG:
                 to_process_docs.update(failed_docs)
                 to_process_docs.update(pending_docs)
 
+        except asyncio.CancelledError:
+            # 处理任务取消
+            log_message = "Document processing pipeline cancelled"
+            await log_error_with_pipeline_msg(log_message, pipeline_status, pipeline_status_lock)
+            await self._handle_processing_error("Pipeline was cancelled", pipeline_status, pipeline_status_lock)
+            raise
+        except Exception as e:
+            # 处理其他异常
+            error_msg = f"Pipeline error: {str(e)}
+{traceback.format_exc()}"
+            await log_error_with_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
+            await self._handle_processing_error(str(e), pipeline_status, pipeline_status_lock)
+            # 重新抛出异常以便上层处理
+            raise
         finally:
-            log_message = "Document processing pipeline completed"
-            await update_pipeline_msg(log_message, pipeline_status, pipeline_status_lock,{'busy':False})
+            # 确保无论如何都重置busy标志
+            try:
+                log_message = "Document processing pipeline completed"
+                await update_pipeline_msg(log_message, pipeline_status, pipeline_status_lock, {'busy': False})
+            except Exception as e:
+                # 防止清理操作本身失败
+                logger.error(f"Failed to reset pipeline status: {e}")
+                # 使用更基础的方式尝试重置
+                try:
+                    async with pipeline_status_lock:
+                        pipeline_status["busy"] = False
+                        pipeline_status["latest_message"] = "Pipeline reset by fallback mechanism"
+                except Exception as fallback_error:
+                    logger.error(f"Fallback cleanup also failed: {fallback_error}")
 
     async def _process_entity_relation_graph(
         self, chunk: dict[str, Any], pipeline_status=None, pipeline_status_lock=None, doc_id: str = None
@@ -1585,6 +1626,36 @@ class LightRAG:
             await log_error_with_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
             raise e
 
+    async def _handle_processing_error(
+        self, error_message: str, pipeline_status: dict, pipeline_status_lock: asyncio.Lock
+    ) -> None:
+        """处理处理过程中的错误，清理卡住的文档状态"""
+        try:
+            # 获取当前所有处于处理中的文档
+            processing_docs = await self.doc_status.get_docs_by_status(DocStatus.PROCESSING)
+            
+            if processing_docs:
+                logger.warning(f"Found {len(processing_docs)} documents stuck in PROCESSING state, converting to FAILED")
+                
+                # 批量更新卡住的文档状态
+                failed_updates = {}
+                for doc_id, status in processing_docs.items():
+                    failed_updates[doc_id] = {
+                        **asdict(status),
+                        "status": DocStatus.FAILED,
+                        "error_msg": f"Processing interrupted: {error_message}",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                
+                if failed_updates:
+                    await self.doc_status.upsert(failed_updates)
+                    await self.doc_status.index_done_callback()
+                    
+                    logger.info(f"Updated {len(failed_updates)} stuck documents to FAILED state")
+                    
+        except Exception as e:
+            logger.error(f"Failed to handle processing error: {e}")
+    
     async def _insert_done(
         self, pipeline_status=None, pipeline_status_lock=None
     ) -> None:
