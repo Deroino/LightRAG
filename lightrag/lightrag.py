@@ -1065,8 +1065,8 @@ class LightRAG:
                 "status": DocStatus.PENDING,
                 "content_summary": get_content_summary(content_data["content"]),
                 "content_length": len(content_data["content"]),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
                 "file_path": content_data[
                     "file_path"
                 ],  # Store file path in document status
@@ -1160,7 +1160,7 @@ class LightRAG:
                     {
                         "busy": True,
                         "job_name": "Default Job",
-                        "job_start": datetime.now(timezone.utc).isoformat(),
+                        "job_start": datetime.now().isoformat(),
                         "docs": 0,
                         "batchs": 0,  # Total number of files to be processed
                         "cur_batch": 0,  # Number of files already processed
@@ -1526,14 +1526,15 @@ class LightRAG:
                     # Get current document status
                     current_status = await self.doc_status.get_by_id(doc_id)
                     if current_status:
-                        # Update chunks_processed field
+                        # Update chunks_processed field and persist immediately
                         await self.doc_status.upsert({
                             doc_id: {
-                                **current_status,
+                                **asdict(current_status),
                                 "chunks_processed": processed_chunks,
-                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                                "updated_at": datetime.now().isoformat(),
                             }
                         })
+                        await self.doc_status.index_done_callback()
             
             chunk_results = await extract_entities(
                 chunk,
