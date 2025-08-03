@@ -604,8 +604,13 @@ def wrap_embedding_func_with_attrs(**kwargs):
 def load_json(file_name):
     if not os.path.exists(file_name):
         return None
-    with open(file_name, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(file_name, encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON decode error in file {file_name}: {e}")
+        # Return empty dict as fallback instead of raising exception
+        return {}
 
 
 def write_json(json_obj, file_name):
