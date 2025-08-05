@@ -35,11 +35,11 @@ const Label = ({
 
 interface DeleteDocumentsDialogProps {
   selectedDocIds: string[]
-  totalCompletedCount: number
+  totalDocumentCount: number
   onDocumentsDeleted?: () => Promise<void>
 }
 
-export default function DeleteDocumentsDialog({ selectedDocIds, totalCompletedCount, onDocumentsDeleted }: DeleteDocumentsDialogProps) {
+export default function DeleteDocumentsDialog({ selectedDocIds, totalDocumentCount, onDocumentsDeleted }: DeleteDocumentsDialogProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [confirmText, setConfirmText] = useState('')
@@ -59,8 +59,8 @@ export default function DeleteDocumentsDialog({ selectedDocIds, totalCompletedCo
   const handleDelete = useCallback(async () => {
     if (!isConfirmEnabled || selectedDocIds.length === 0) return
 
-    // Check if user is trying to delete all completed documents
-    if (selectedDocIds.length === totalCompletedCount && totalCompletedCount > 0) {
+    // Check if user is trying to delete all documents
+    if (selectedDocIds.length === totalDocumentCount && totalDocumentCount > 0) {
       toast.error(t('documentPanel.deleteDocuments.cannotDeleteAll'))
       return
     }
@@ -101,7 +101,7 @@ export default function DeleteDocumentsDialog({ selectedDocIds, totalCompletedCo
     } finally {
       setIsDeleting(false)
     }
-  }, [isConfirmEnabled, selectedDocIds, totalCompletedCount, deleteFile, setOpen, t, onDocumentsDeleted])
+  }, [isConfirmEnabled, selectedDocIds, totalDocumentCount, deleteFile, setOpen, t, onDocumentsDeleted])
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

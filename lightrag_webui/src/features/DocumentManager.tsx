@@ -19,6 +19,7 @@ import ClearDocumentsDialog from '@/components/documents/ClearDocumentsDialog'
 import DeleteDocumentsDialog from '@/components/documents/DeleteDocumentsDialog'
 import DeselectDocumentsDialog from '@/components/documents/DeselectDocumentsDialog'
 import PaginationControls from '@/components/ui/PaginationControls'
+import RetryFailedDocumentsButton from '@/components/documents/RetryFailedDocumentsButton'
 
 import {
   scanNewDocuments,
@@ -801,7 +802,6 @@ export default function DocumentManager() {
               <ActivityIcon /> {t('documentPanel.documentManager.pipelineStatusButton')}
             </Button>
           </div>
-
           {/* Pagination Controls in the middle */}
           {pagination.total_pages > 1 && (
             <PaginationControls
@@ -816,21 +816,29 @@ export default function DocumentManager() {
             />
           )}
 
+          <div className="flex-1" />
+
           <div className="flex gap-2">
-            {isSelectionMode && (
-              <DeleteDocumentsDialog
-                selectedDocIds={selectedDocIds}
-                totalCompletedCount={documentCounts.processed || 0}
-                onDocumentsDeleted={handleDocumentsDeleted}
-              />
-            )}
             {isSelectionMode ? (
-              <DeselectDocumentsDialog
-                selectedCount={selectedDocIds.length}
-                onDeselect={handleDeselectAll}
-              />
+              <>
+                <DeleteDocumentsDialog
+                  selectedDocIds={selectedDocIds}
+                  totalCompletedCount={documentCounts.processed || 0}
+                  onDocumentsDeleted={handleDocumentsDeleted}
+                />
+                <DeselectDocumentsDialog
+                  selectedCount={selectedDocIds.length}
+                  onDeselect={handleDeselectAll}
+                />
+              </>
             ) : (
-              <ClearDocumentsDialog onDocumentsCleared={handleDocumentsCleared} />
+              <>
+                <RetryFailedDocumentsButton
+                  failedCount={documentCounts.failed || 0}
+                  onRetryCompleted={fetchDocuments}
+                />
+                <ClearDocumentsDialog onDocumentsCleared={handleDocumentsCleared} />
+              </>
             )}
             <UploadDocumentsDialog onDocumentsUploaded={fetchDocuments} />
             <PipelineStatusDialog
@@ -975,7 +983,7 @@ export default function DocumentManager() {
                         <TableHead>{t('documentPanel.documentManager.columns.summary')}</TableHead>
                         <TableHead>{t('documentPanel.documentManager.columns.status')}</TableHead>
                         <TableHead>{t('documentPanel.documentManager.columns.length')}</TableHead>
-                        <TableHead>{t('documentPanel.documentManager.columns.chunks')}</TableHead>
+                        <TableHead>{t('documentPanel.documentManager.columns.chunksProgress')}</TableHead>
                         <TableHead
                           onClick={() => handleSort('created_at')}
                           className="cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-800 select-none"
@@ -1064,7 +1072,12 @@ export default function DocumentManager() {
                             )}
                           </TableCell>
                           <TableCell>{doc.content_length ?? '-'}</TableCell>
-                          <TableCell>{doc.chunks_count ?? '-'}</TableCell>
+                          <TableCell>
+                            {doc.chunks_processed !== undefined && doc.chunks_processed !== null && 
+                             doc.chunks_count !== undefined && doc.chunks_count !== null
+                              ? `${doc.chunks_processed}/${doc.chunks_count}`
+                              : doc.chunks_count ?? '-'}
+                          </TableCell>
                           <TableCell className="truncate">
                             {new Date(doc.created_at).toLocaleString()}
                           </TableCell>

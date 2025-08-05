@@ -85,7 +85,7 @@ export default function PipelineStatusDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          'sm:max-w-[800px] transition-all duration-200 fixed',
+          'sm:max-w-[800px] max-w-[95vw] w-full overflow-hidden transition-all duration-200 fixed',
           position === 'left' && '!left-[25%] !translate-x-[-50%] !mx-4',
           position === 'center' && '!left-1/2 !-translate-x-1/2',
           position === 'right' && '!left-[75%] !translate-x-[-50%] !mx-4'
@@ -141,7 +141,7 @@ export default function PipelineStatusDialog({
         </DialogHeader>
 
         {/* Status Content */}
-        <div className="space-y-4 pt-4">
+        <div className="space-y-4 pt-4 w-full max-w-full min-w-0 overflow-hidden">
           {/* Pipeline Status */}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -175,7 +175,7 @@ export default function PipelineStatusDialog({
           {/* Latest Message */}
           <div className="space-y-2">
             <div className="text-sm font-medium">{t('documentPanel.pipelineStatus.latestMessage')}:</div>
-            <div className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 whitespace-pre-wrap break-words">
+            <div className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 whitespace-pre-wrap break-words overflow-x-auto max-h-32 w-full max-w-full min-w-0">
               {status?.latest_message || '-'}
             </div>
           </div>
@@ -186,11 +186,11 @@ export default function PipelineStatusDialog({
             <div
               ref={historyRef}
               onScroll={handleScroll}
-              className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 overflow-y-auto min-h-[7.5em] max-h-[40vh]"
+              className="font-mono text-xs rounded-md bg-zinc-800 text-zinc-100 p-3 overflow-y-auto overflow-x-hidden min-h-[7.5rem] max-h-80 w-full max-w-full min-w-0"
             >
               {status?.history_messages?.length ? (
                 status.history_messages.map((msg, idx) => (
-                  <div key={idx} className="whitespace-pre-wrap break-words">{msg}</div>
+                  <div key={idx} className="whitespace-pre-wrap break-words overflow-wrap-anywhere w-full max-w-full min-w-0">{msg}</div>
                 ))
               ) : '-'}
             </div>
