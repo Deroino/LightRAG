@@ -604,8 +604,13 @@ def wrap_embedding_func_with_attrs(**kwargs):
 def load_json(file_name):
     if not os.path.exists(file_name):
         return None
-    with open(file_name, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(file_name, encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(f"JSON decode error in file {file_name}: {e}")
+        # Return empty dict as fallback instead of raising exception
+        return {}
 
 
 def write_json(json_obj, file_name):
@@ -1369,6 +1374,20 @@ def remove_think_tags(text: str) -> str:
     return re.sub(r"^(<think>.*?</think>|<think>)", "", text, flags=re.DOTALL).strip()
 
 
+def locate_json_string_body_from_string(text: str) -> str:
+    """
+    Locate and extract the JSON string body from a string.
+    Finds the first '{' and the last '}' and returns the content in between.
+    """
+    try:
+        start_index = text.index("{")
+        end_index = text.rindex("}") + 1
+        return text[start_index:end_index]
+    except ValueError:
+        logger.error(f"Could not locate JSON string body in text: {text}")
+        return text
+
+
 async def use_llm_func_with_cache(
     input_text: str,
     use_llm_func: callable,
@@ -1919,3 +1938,57 @@ def generate_track_id(prefix: str = "upload") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
     return f"{prefix}_{timestamp}_{unique_id}"
+
+async def log_error_with_pipeline_msg(
+    message: str,
+    pipeline_status: dict = None,
+    pipeline_status_lock=None,
+    pipeline_set_data={}
+):
+    logger.error(message)
+    await update_pipeline_msg(message, pipeline_status, pipeline_status_lock,pipeline_set_data)
+
+async def log_info_with_pipeline_msg(
+        message: str,
+        pipeline_status: dict = None,
+        pipeline_status_lock=None,
+        pipeline_set_data={},
+):
+    logger.info(message)
+    await update_pipeline_msg(message, pipeline_status, pipeline_status_lock,pipeline_set_data)
+
+async def update_pipeline_msg(
+    message: str,
+    pipeline_status: dict = None,
+    pipeline_status_lock=None,
+    pipeline_set_data = {},
+    update_latest: bool = True,
+    add_to_history: bool = True,
+):
+    """
+    Update pipeline status with a timestamped message.
+    
+    Args:
+        message: The message to add
+        pipeline_status: Pipeline status dictionary
+        pipeline_status_lock: Pipeline status lock
+        update_latest: Whether to update latest_message
+        add_to_history: Whether to add to history_messages
+    """
+    if pipeline_status is not None and pipeline_status_lock is not None:
+        # Always add timestamp to message (using Beijing timezone)
+        from datetime import datetime, timezone, timedelta
+        beijing_tz = timezone(timedelta(hours=8))
+        timestamp = datetime.now(beijing_tz).strftime("%H:%M:%S")
+        timestamped_message = f"[{timestamp}] {message}"
+            
+        async with pipeline_status_lock:
+
+            for k,v in pipeline_set_data.items():
+                pipeline_status[k] = v
+
+            if update_latest:
+                pipeline_status["latest_message"] = timestamped_message
+            if add_to_history:
+                pipeline_status["history_messages"].append(timestamped_message)
+
