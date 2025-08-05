@@ -158,6 +158,12 @@ export type DeleteDocResponse = {
   doc_id: string
 }
 
+export type RetryFailedResponse = {
+  status: 'retry_started' | 'no_failed_documents' | 'busy'
+  message: string
+  failed_count?: number
+}
+
 export type DocStatus = 'pending' | 'processing' | 'processed' | 'failed'
 
 export type DocStatusResponse = {
@@ -170,6 +176,7 @@ export type DocStatusResponse = {
   track_id?: string
   chunks_count?: number
   error_msg?: string
+  chunks_processed?: number
   metadata?: Record<string, any>
   file_path: string
 }
@@ -598,6 +605,11 @@ export const deleteDocuments = async (docIds: string[], deleteFile: boolean = fa
   const response = await axiosInstance.delete('/documents/delete_document', {
     data: { doc_ids: docIds, delete_file: deleteFile }
   })
+  return response.data
+}
+
+export const retryFailedDocuments = async (): Promise<RetryFailedResponse> => {
+  const response = await axiosInstance.post('/documents/retry-failed')
   return response.data
 }
 

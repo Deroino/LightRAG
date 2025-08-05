@@ -1,4 +1,4 @@
-import { ButtonVariantType } from '@/components/ui/Button'
+import { ButtonVariantType } from '../components/ui/Button'
 
 export const backendBaseUrl = ''
 export const webuiPrefix = '/webui/'

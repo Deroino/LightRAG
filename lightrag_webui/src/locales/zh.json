@@ -56,6 +56,16 @@
       "failed": "清空文档失败：\n{{message}}",
       "error": "清空文档失败：\n{{error}}"
     },
+    "retryFailedDocuments": {
+      "button": "重试所有失败文档",
+      "tooltip": "重试 {{count}} 个失败文档",
+      "noFailedTooltip": "没有失败的文档需要重试",
+      "retrying": "正在重试所有失败文档...",
+      "success": "已开始重试 {{count}} 个失败文档",
+      "error": "重试失败文档失败：\n{{error}}",
+      "noFailedDocuments": "没有失败的文档需要重试",
+      "busy": "处理管道正忙，请稍后再试"
+    },
     "deleteDocuments": {
       "button": "删除",
       "tooltip": "删除选中的文档",
@@ -130,7 +140,7 @@
         "summary": "摘要",
         "status": "状态",
         "length": "长度",
-        "chunks": "分块",
+        "chunksProgress": "分块处理进度",
         "created": "创建时间",
         "updated": "更新时间",
         "metadata": "元数据",
