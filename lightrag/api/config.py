@@ -115,6 +115,18 @@ def parse_args() -> argparse.Namespace:
 
     # RAG configuration
     parser.add_argument(
+        "--disable-scheduler",
+        action="store_true",
+        default=get_env_value("DISABLE_SCHEDULER", False, bool),
+        help="Disable the scheduler for retrying failed documents (it is enabled by default)",
+    )
+    parser.add_argument(
+        "--scheduler-interval-minutes",
+        type=int,
+        default=get_env_value("SCHEDULER_INTERVAL_MINUTES", 1, int),
+        help="Interval in minutes for the scheduler to retry failed documents (default: from env or 1)",
+    )
+    parser.add_argument(
         "--max-async",
         type=int,
         default=get_env_value("MAX_ASYNC", DEFAULT_MAX_ASYNC, int),

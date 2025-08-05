@@ -3,6 +3,8 @@ This module contains all document-related routes for the LightRAG API.
 """
 
 import asyncio
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from pyuca import Collator
 from lightrag.utils import logger
 import aiofiles
@@ -26,6 +28,7 @@ from lightrag import LightRAG
 from lightrag.base import DeletionResult, DocProcessingStatus, DocStatus
 from lightrag.utils import generate_track_id
 from lightrag.api.utils_api import get_combined_auth_dependency
+from lightrag.utils import update_pipeline_msg, log_info_with_pipeline_msg, log_error_with_pipeline_msg
 from ..config import global_args
 
 
@@ -288,6 +291,31 @@ class ClearCacheResponse(BaseModel):
         }
 
 
+class RetryFailedResponse(BaseModel):
+    """Response model for retry failed documents operation
+
+    Attributes:
+        status: Status of the retry operation
+        message: Detailed message describing the operation result
+        failed_count: Number of failed documents found (optional)
+    """
+
+    status: Literal["retry_started", "no_failed_documents", "busy"] = Field(
+        description="Status of the retry operation"
+    )
+    message: str = Field(description="Message describing the operation result")
+    failed_count: int = Field(default=0, description="Number of failed documents found")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "retry_started",
+                "message": "Retry process initiated for 3 failed documents",
+                "failed_count": 3,
+            }
+        }
+
+
 """Response model for document status
 
 Attributes:
@@ -367,7 +395,10 @@ class DocStatusResponse(BaseModel):
         default=None, description="Number of chunks the document was split into"
     )
     error_msg: Optional[str] = Field(
-        default=None, description="Error message if processing failed"
+       default=None, description="Error message if processing failed"
+    )
+    chunks_processed: Optional[int] = Field(
+        default=0, description="Number of chunks that have been processed"
     )
     metadata: Optional[dict[str, Any]] = Field(
         default=None, description="Additional metadata about the document"
@@ -385,6 +416,7 @@ class DocStatusResponse(BaseModel):
                 "updated_at": "2025-03-31T12:35:30",
                 "track_id": "upload_20250729_170612_abc123",
                 "chunks_count": 12,
+                "chunks_processed": 8,
                 "error": None,
                 "metadata": {"author": "John Doe", "year": 2025},
                 "file_path": "research_paper.pdf",
@@ -1106,13 +1138,10 @@ async def background_delete_documents(
     try:
         # Loop through each document ID and delete them one by one
         for i, doc_id in enumerate(doc_ids, 1):
-            async with pipeline_status_lock:
-                start_msg = f"Deleting document {i}/{total_docs}: {doc_id}"
-                logger.info(start_msg)
-                pipeline_status["cur_batch"] = i
-                pipeline_status["latest_message"] = start_msg
-                pipeline_status["history_messages"].append(start_msg)
-
+            await update_pipeline_msg(f"Deleting document {i}/{total_docs}: {doc_id}",
+             pipeline_status,
+              pipeline_status_lock,
+              {'cur_batch':i})
             file_path = "#"
             try:
                 result = await rag.adelete_by_doc_id(doc_id)
@@ -1125,8 +1154,7 @@ async def background_delete_documents(
                         f"Deleted document {i}/{total_docs}: {doc_id}[{file_path}]"
                     )
                     logger.info(success_msg)
-                    async with pipeline_status_lock:
-                        pipeline_status["history_messages"].append(success_msg)
+                    await update_pipeline_msg(success_msg, pipeline_status, pipeline_status_lock)
 
                     # Handle file deletion if requested and file_path is available
                     if (
@@ -1142,70 +1170,42 @@ async def background_delete_documents(
                                     f"Successfully deleted file: {result.file_path}"
                                 )
                                 logger.info(file_delete_msg)
-                                async with pipeline_status_lock:
-                                    pipeline_status["latest_message"] = file_delete_msg
-                                    pipeline_status["history_messages"].append(
-                                        file_delete_msg
-                                    )
+                                await update_pipeline_msg(file_delete_msg, pipeline_status, pipeline_status_lock)
                             else:
                                 file_not_found_msg = (
                                     f"File not found for deletion: {result.file_path}"
                                 )
                                 logger.warning(file_not_found_msg)
-                                async with pipeline_status_lock:
-                                    pipeline_status["latest_message"] = (
-                                        file_not_found_msg
-                                    )
-                                    pipeline_status["history_messages"].append(
-                                        file_not_found_msg
-                                    )
+                                await update_pipeline_msg(file_not_found_msg, pipeline_status, pipeline_status_lock)
                         except Exception as file_error:
                             file_error_msg = f"Failed to delete file {result.file_path}: {str(file_error)}"
                             logger.error(file_error_msg)
-                            async with pipeline_status_lock:
-                                pipeline_status["latest_message"] = file_error_msg
-                                pipeline_status["history_messages"].append(
-                                    file_error_msg
-                                )
+                            await update_pipeline_msg(file_error_msg, pipeline_status, pipeline_status_lock)
                     elif delete_file:
                         no_file_msg = f"No valid file path found for document {doc_id}"
                         logger.warning(no_file_msg)
-                        async with pipeline_status_lock:
-                            pipeline_status["latest_message"] = no_file_msg
-                            pipeline_status["history_messages"].append(no_file_msg)
+                        await update_pipeline_msg(no_file_msg, pipeline_status, pipeline_status_lock)
                 else:
                     failed_deletions.append(doc_id)
-                    error_msg = f"Failed to delete {i}/{total_docs}: {doc_id}[{file_path}] - {result.message}"
+                    error_msg = f"Failed to delete {i}/{total_docs}: {doc_id}[{file_path}] - {result.message} \n {traceback.format_exc()}"
                     logger.error(error_msg)
-                    async with pipeline_status_lock:
-                        pipeline_status["latest_message"] = error_msg
-                        pipeline_status["history_messages"].append(error_msg)
+                    await update_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
 
             except Exception as e:
                 failed_deletions.append(doc_id)
-                error_msg = f"Error deleting document {i}/{total_docs}: {doc_id}[{file_path}] - {str(e)}"
+                error_msg = f"Error deleting document {i}/{total_docs}: {doc_id}[{file_path}] - {str(e)} \n {traceback.format_exc()}"
                 logger.error(error_msg)
-                logger.error(traceback.format_exc())
-                async with pipeline_status_lock:
-                    pipeline_status["latest_message"] = error_msg
-                    pipeline_status["history_messages"].append(error_msg)
+                await update_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
 
     except Exception as e:
-        error_msg = f"Critical error during batch deletion: {str(e)}"
+        error_msg = f"Critical error during batch deletion: {str(e)} \n {traceback.format_exc()}"
         logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        async with pipeline_status_lock:
-            pipeline_status["history_messages"].append(error_msg)
+        await update_pipeline_msg(error_msg, pipeline_status, pipeline_status_lock)
     finally:
         # Final summary and check for pending requests
-        async with pipeline_status_lock:
-            pipeline_status["busy"] = False
-            completion_msg = f"Deletion completed: {len(successful_deletions)} successful, {len(failed_deletions)} failed"
-            pipeline_status["latest_message"] = completion_msg
-            pipeline_status["history_messages"].append(completion_msg)
-
-            # Check if there are pending document indexing requests
-            has_pending_request = pipeline_status.get("request_pending", False)
+        await update_pipeline_msg(f"Deletion completed: {len(successful_deletions)} successful, {len(failed_deletions)} failed", pipeline_status, pipeline_status_lock,{'busy':False})
+        # Check if there are pending document indexing requests
+        has_pending_request = pipeline_status.get("request_pending", False)
 
         # If there are pending requests, start document processing pipeline
         if has_pending_request:
@@ -1219,7 +1219,9 @@ async def background_delete_documents(
 
 
 def create_document_routes(
-    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None
+    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None,
+    enable_scheduler: bool = False,
+    scheduler_interval_minutes: int = 60
 ):
     # Create combined auth dependency for document routes
     combined_auth = get_combined_auth_dependency(api_key)
@@ -1707,7 +1709,8 @@ def create_document_routes(
                             updated_at=format_datetime(doc_status.updated_at),
                             track_id=doc_status.track_id,
                             chunks_count=doc_status.chunks_count,
-                            error_msg=doc_status.error_msg,
+                            error_msg=doc_status.error,
+                            chunks_processed=doc_status.chunks_processed,
                             metadata=doc_status.metadata,
                             file_path=doc_status.file_path,
                         )
@@ -1837,6 +1840,77 @@ def create_document_routes(
             return ClearCacheResponse(status="success", message=message)
         except Exception as e:
             logger.error(f"Error clearing cache: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.post(
+        "/retry-failed",
+        response_model=RetryFailedResponse,
+        dependencies=[Depends(combined_auth)],
+    )
+    async def retry_failed_documents(background_tasks: BackgroundTasks):
+        """
+        Retry processing all failed documents.
+
+        This endpoint identifies all documents with FAILED status and triggers
+        a background task to reprocess them. The retry leverages LLM response
+        caching to avoid redundant API calls while ensuring complete reprocessing
+        for data consistency.
+
+        Returns:
+            RetryFailedResponse: A response object containing:
+                - status: "retry_started", "no_failed_documents", or "busy"
+                - message: Detailed description of the operation
+                - failed_count: Number of failed documents found
+
+        Raises:
+            HTTPException: If an error occurs during the retry initiation (500).
+        """
+        try:
+            # Check pipeline status to prevent concurrent operations
+            from lightrag.kg.shared_storage import get_pipeline_status_lock, get_namespace_data
+            
+            pipeline_status = await get_namespace_data("pipeline_status")
+            pipeline_status_lock = get_pipeline_status_lock()
+            
+            async with pipeline_status_lock:
+                
+                # Check if pipeline is currently busy
+                if pipeline_status.get("busy", False):
+                    return RetryFailedResponse(
+                        status="busy",
+                        message="Pipeline is currently busy processing documents. Please try again later.",
+                        failed_count=0
+                    )
+                
+                # Get all failed documents
+                failed_docs = await rag.get_docs_by_status(DocStatus.FAILED)
+                failed_count = len(failed_docs)
+                
+                if failed_count == 0:
+                    return RetryFailedResponse(
+                        status="no_failed_documents",
+                        message="No failed documents found to retry.",
+                        failed_count=0
+                    )
+                
+                # Set up retry request (let apipeline_process_enqueue_documents manage busy state)
+                pipeline_status.update({
+                    "request_pending": True,  # This triggers the retry logic
+                    "latest_message": f"Retrying {failed_count} failed documents"
+                })
+                
+            # Start the retry process in background
+            background_tasks.add_task(rag.apipeline_process_enqueue_documents)
+            
+            return RetryFailedResponse(
+                status="retry_started",
+                message=f"Retry process initiated for {failed_count} failed documents",
+                failed_count=failed_count
+            )
+            
+        except Exception as e:
+            logger.error(f"Error retrying failed documents: {str(e)}")
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -2101,4 +2175,64 @@ def create_document_routes(
             logger.error(traceback.format_exc())
             raise HTTPException(status_code=500, detail=str(e))
 
+    # Add a scheduler to retry failed documents
+    if enable_scheduler:
+        logger.info(f"Scheduler enabled, setting up retry for failed documents every {scheduler_interval_minutes} minutes")
+        setup_retry_failed_scheduler(rag, scheduler_interval_minutes)
+
     return router
+
+
+def setup_retry_failed_scheduler(rag: LightRAG, interval_minutes: int):
+    """Set up a scheduler to retry failed documents periodically."""
+    scheduler = BackgroundScheduler()
+
+    async def retry_job():
+        logger.info("Scheduler triggered: Retrying failed documents...")
+        try:
+            # Similar logic from the retry_failed_documents endpoint
+            from lightrag.kg.shared_storage import get_pipeline_status_lock, get_namespace_data
+            
+            pipeline_status = await get_namespace_data("pipeline_status")
+            pipeline_status_lock = get_pipeline_status_lock()
+            
+            async with pipeline_status_lock:
+                if pipeline_status.get("busy", False):
+                    logger.info("Scheduler: Pipeline is busy, skipping retry this time.")
+                    return
+                
+                failed_docs = await rag.get_docs_by_status(DocStatus.FAILED)
+                if not failed_docs:
+                    logger.info("Scheduler: No failed documents to retry.")
+                    return
+                
+                pipeline_status.update({
+                    "request_pending": True,
+                    "latest_message": f"Scheduler: Retrying {len(failed_docs)} failed documents"
+                })
+
+            await rag.apipeline_process_enqueue_documents()
+            logger.info(f"Scheduler: Successfully initiated retry for {len(failed_docs)} documents.")
+
+        except Exception as e:
+            logger.error(f"Scheduler: Error during retry job: {e}")
+            logger.error(traceback.format_exc())
+
+
+    def run_async_job():
+        """Helper to run an async job in a sync context."""
+        try:
+            asyncio.run(retry_job())
+        except Exception as e:
+            logger.error(f"Scheduler: Error running async retry job: {e}")
+            logger.error(traceback.format_exc())
+
+    scheduler.add_job(
+        run_async_job,
+        trigger=IntervalTrigger(minutes=interval_minutes),
+        id="retry_failed_documents_job",
+        name="Retry Failed Documents",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info(f"Scheduler started to retry failed documents every {interval_minutes} minutes.")
