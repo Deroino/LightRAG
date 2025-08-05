@@ -1,0 +1,43 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [ feature/patch-improvements ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ feature/patch-improvements ]
+
+jobs:
+  docker-build:
+    uses: Deroino/docker-build-workflow/.github/workflows/reusable-docker-build.yaml@main
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    with:
+      # Multi-platform build for ARM64 and AMD64
+      platforms: linux/amd64,linux/arm64
+      
+      # Push to Docker Hub and GHCR
+      dockerhub-enable: false
+      ghcr-enable: true
+      image-names: |
+        ghcr.io/deroino/lightrag-modifyed:latest
+      
+      # Enable email notifications
+      email-enable: true
+      email-to: wangchenghow@foxmail.com
+      email-server: smtp.qq.com
+      email-port: 465
+      
+      # Enable push notifications
+      push-notify-enable: false
+      
+    secrets:
+      # Docker Hub credentials (disabled as we only use GHCR)
+      # dockerhub-username: ${{ secrets.DOCKER_USERNAME }}
+      # dockerhub-token: ${{ secrets.DOCKER_PASSWORD }}
+      
+      # Email credentials (enabled)
+      email-username: ${{ secrets.EMAIL_USERNAME }}
+      email-password: ${{ secrets.EMAIL_PASSWORD }}
