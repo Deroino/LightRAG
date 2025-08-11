@@ -18,16 +18,11 @@ jobs:
       # Multi-platform build for ARM64 and AMD64
       platforms: linux/amd64,linux/arm64
       
-      # Push to Docker Hub and GHCR
+      # Push to Docker Hub and GHCR  
       dockerhub-enable: false
       ghcr-enable: true
       image-names: |
         ghcr.io/deroino/lightrag-modifyed
-      
-      # 添加标签配置以修复构建错误
-      tags: |
-        ghcr.io/deroino/lightrag-modifyed:latest
-        ghcr.io/deroino/lightrag-modifyed:${{ github.ref_name }}
       
       # Enable email notifications
       email-enable: true
