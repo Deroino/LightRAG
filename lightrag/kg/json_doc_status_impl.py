@@ -68,13 +68,13 @@ class JsonDocStatusStorage(DocStatusStorage):
         async with self._storage_lock:
             return set(keys) - set(self._data.keys())
 
-    async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
+    async def get_by_ids(self, ids: list[str]) -> list[DocProcessingStatus]:
+        result: list[DocProcessingStatus] = []
         async with self._storage_lock:
             for id in ids:
                 data = self._data.get(id, None)
                 if data:
-                    result.append(data)
+                    result.append(DocProcessingStatus(**data))
         return result
 
     async def get_status_counts(self) -> dict[str, int]:
@@ -170,9 +170,12 @@ class JsonDocStatusStorage(DocStatusStorage):
 
         await self.index_done_callback()
 
-    async def get_by_id(self, id: str) -> Union[dict[str, Any], None]:
+    async def get_by_id(self, id: str) -> Union[DocProcessingStatus, None]:
         async with self._storage_lock:
-            return self._data.get(id)
+            data = self._data.get(id)
+            if data:
+                return DocProcessingStatus(**data)
+            return None
 
     async def get_docs_paginated(
         self,
