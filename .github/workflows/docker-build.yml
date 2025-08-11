@@ -24,6 +24,11 @@ jobs:
       image-names: |
         ghcr.io/deroino/lightrag-modifyed
       
+      # 添加标签配置以修复构建错误
+      tags: |
+        ghcr.io/deroino/lightrag-modifyed:latest
+        ghcr.io/deroino/lightrag-modifyed:${{ github.ref_name }}
+      
       # Enable email notifications
       email-enable: true
       email-to: wangchenghow@foxmail.com
