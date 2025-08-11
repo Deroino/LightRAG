@@ -72,7 +72,6 @@ from .operate import (
     merge_nodes_and_edges,
     kg_query,
     naive_query,
-    query_with_keywords,
     _rebuild_knowledge_from_chunks,
 )
 from .constants import GRAPH_FIELD_SEP
@@ -1816,8 +1815,6 @@ class LightRAG:
         """
         # If a custom model is provided in param, temporarily update global config
         global_config = asdict(self)
-        # Save original query for vector search
-        param.original_query = query
 
         if param.mode in ["local", "global", "hybrid", "mix"]:
             response = await kg_query(
@@ -1859,114 +1856,38 @@ class LightRAG:
         await self._query_done()
         return response
 
-    # TODO: Deprecated, use user_prompt in QueryParam instead
-    def query_with_separate_keyword_extraction(
-        self, query: str, prompt: str, param: QueryParam = QueryParam()
-    ):
-        """
-        Query with separate keyword extraction step.
-
-        This method extracts keywords from the query first, then uses them for the query.
-
-        Args:
-            query: User query
-            prompt: Additional prompt for the query
-            param: Query parameters
-
-        Returns:
-            Query response
-        """
-        loop = always_get_an_event_loop()
-        return loop.run_until_complete(
-            self.aquery_with_separate_keyword_extraction(query, prompt, param)
-        )
-
-    # TODO: Deprecated, use user_prompt in QueryParam instead
-    async def aquery_with_separate_keyword_extraction(
-        self, query: str, prompt: str, param: QueryParam = QueryParam()
-    ) -> str | AsyncIterator[str]:
-        """
-        Async version of query_with_separate_keyword_extraction.
-
-        Args:
-            query: User query
-            prompt: Additional prompt for the query
-            param: Query parameters
-
-        Returns:
-            Query response or async iterator
-        """
-        response = await query_with_keywords(
-            query=query,
-            prompt=prompt,
-            param=param,
-            knowledge_graph_inst=self.chunk_entity_relation_graph,
-            entities_vdb=self.entities_vdb,
-            relationships_vdb=self.relationships_vdb,
-            chunks_vdb=self.chunks_vdb,
-            text_chunks_db=self.text_chunks,
-            global_config=asdict(self),
-            hashing_kv=self.llm_response_cache,
-        )
-
-        await self._query_done()
-        return response
-
     async def _query_done(self):
         await self.llm_response_cache.index_done_callback()
 
-    async def aclear_cache(self, modes: list[str] | None = None) -> None:
-        """Clear cache data from the LLM response cache storage.
+    async def aclear_cache(self) -> None:
+        """Clear all cache data from the LLM response cache storage.
 
-        Args:
-            modes (list[str] | None): Modes of cache to clear. Options: ["default", "naive", "local", "global", "hybrid", "mix"].
-                             "default" represents extraction cache.
-                             If None, clears all cache.
+        This method clears all cached LLM responses regardless of mode.
 
         Example:
             # Clear all cache
             await rag.aclear_cache()
-
-            # Clear local mode cache
-            await rag.aclear_cache(modes=["local"])
-
-            # Clear extraction cache
-            await rag.aclear_cache(modes=["default"])
         """
         if not self.llm_response_cache:
             logger.warning("No cache storage configured")
             return
 
-        valid_modes = ["default", "naive", "local", "global", "hybrid", "mix"]
-
-        # Validate input
-        if modes and not all(mode in valid_modes for mode in modes):
-            raise ValueError(f"Invalid mode. Valid modes are: {valid_modes}")
-
         try:
-            # Reset the cache storage for specified mode
-            if modes:
-                success = await self.llm_response_cache.drop_cache_by_modes(modes)
-                if success:
-                    logger.info(f"Cleared cache for modes: {modes}")
-                else:
-                    logger.warning(f"Failed to clear cache for modes: {modes}")
+            # Clear all cache using drop method
+            success = await self.llm_response_cache.drop()
+            if success:
+                logger.info("Cleared all cache")
             else:
-                # Clear all modes
-                success = await self.llm_response_cache.drop_cache_by_modes(valid_modes)
-                if success:
-                    logger.info("Cleared all cache")
-                else:
-                    logger.warning("Failed to clear all cache")
+                logger.warning("Failed to clear all cache")
 
             await self.llm_response_cache.index_done_callback()
 
         except Exception as e:
             logger.error(f"Error while clearing cache: {e}")
 
-    def clear_cache(self, modes: list[str] | None = None) -> None:
+    def clear_cache(self) -> None:
         """Synchronous version of aclear_cache."""
-        return always_get_an_event_loop().run_until_complete(self.aclear_cache(modes))
+        return always_get_an_event_loop().run_until_complete(self.aclear_cache())
 
     async def get_docs_by_status(
         self, status: DocStatus

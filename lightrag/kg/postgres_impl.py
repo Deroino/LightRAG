@@ -66,6 +66,12 @@ class PostgreSQLDB:
         self.ssl_root_cert = config.get("ssl_root_cert")
         self.ssl_crl = config.get("ssl_crl")
 
+        # Vector configuration
+        self.vector_index_type = config.get("vector_index_type")
+        self.hnsw_m = config.get("hnsw_m")
+        self.hnsw_ef = config.get("hnsw_ef")
+        self.ivfflat_lists = config.get("ivfflat_lists")
+
         if self.user is None or self.password is None or self.database is None:
             raise ValueError("Missing database user, password, or database")
 
@@ -224,15 +230,15 @@ class PostgreSQLDB:
         ):
             pass
 
-    async def _migrate_llm_cache_add_columns(self):
-        """Add chunk_id and cache_type columns to LIGHTRAG_LLM_CACHE table if they don't exist"""
+    async def _migrate_llm_cache_schema(self):
+        """Migrate LLM cache schema: add new columns and remove deprecated mode field"""
         try:
-            # Check if both columns exist
+            # Check if all columns exist
             check_columns_sql = """
             SELECT column_name
             FROM information_schema.columns
             WHERE table_name = 'lightrag_llm_cache'
-            AND column_name IN ('chunk_id', 'cache_type')
+            AND column_name IN ('chunk_id', 'cache_type', 'queryparam', 'mode')
             """
 
             existing_columns = await self.query(check_columns_sql, multirows=True)
@@ -289,8 +295,58 @@ class PostgreSQLDB:
                     "cache_type column already exists in LIGHTRAG_LLM_CACHE table"
                 )
 
+            # Add missing queryparam column
+            if "queryparam" not in existing_column_names:
+                logger.info("Adding queryparam column to LIGHTRAG_LLM_CACHE table")
+                add_queryparam_sql = """
+                ALTER TABLE LIGHTRAG_LLM_CACHE
+                ADD COLUMN queryparam JSONB NULL
+                """
+                await self.execute(add_queryparam_sql)
+                logger.info(
+                    "Successfully added queryparam column to LIGHTRAG_LLM_CACHE table"
+                )
+            else:
+                logger.info(
+                    "queryparam column already exists in LIGHTRAG_LLM_CACHE table"
+                )
+
+            # Remove deprecated mode field if it exists
+            if "mode" in existing_column_names:
+                logger.info(
+                    "Removing deprecated mode column from LIGHTRAG_LLM_CACHE table"
+                )
+
+                # First, drop the primary key constraint that includes mode
+                drop_pk_sql = """
+                ALTER TABLE LIGHTRAG_LLM_CACHE
+                DROP CONSTRAINT IF EXISTS LIGHTRAG_LLM_CACHE_PK
+                """
+                await self.execute(drop_pk_sql)
+                logger.info("Dropped old primary key constraint")
+
+                # Drop the mode column
+                drop_mode_sql = """
+                ALTER TABLE LIGHTRAG_LLM_CACHE
+                DROP COLUMN mode
+                """
+                await self.execute(drop_mode_sql)
+                logger.info(
+                    "Successfully removed mode column from LIGHTRAG_LLM_CACHE table"
+                )
+
+                # Create new primary key constraint without mode
+                add_pk_sql = """
+                ALTER TABLE LIGHTRAG_LLM_CACHE
+                ADD CONSTRAINT LIGHTRAG_LLM_CACHE_PK PRIMARY KEY (workspace, id)
+                """
+                await self.execute(add_pk_sql)
+                logger.info("Created new primary key constraint (workspace, id)")
+            else:
+                logger.info("mode column does not exist in LIGHTRAG_LLM_CACHE table")
+
         except Exception as e:
-            logger.warning(f"Failed to add columns to LIGHTRAG_LLM_CACHE: {e}")
+            logger.warning(f"Failed to migrate LLM cache schema: {e}")
 
     async def _migrate_timestamp_columns(self):
         """Migrate timestamp columns in tables to witimezone-free types, assuming original data is in UTC time"""
@@ -849,6 +905,30 @@ class PostgreSQLDB:
                     f"PostgreSQL, Failed to create composite index on table {k}, Got: {e}"
                 )
 
+        # Create vector indexs
+        if self.vector_index_type:
+            logger.info(
+                f"PostgreSQL, Create vector indexs, type: {self.vector_index_type}"
+            )
+            try:
+                if self.vector_index_type == "HNSW":
+                    await self._create_hnsw_vector_indexes()
+                elif self.vector_index_type == "IVFFLAT":
+                    await self._create_ivfflat_vector_indexes()
+                elif self.vector_index_type == "FLAT":
+                    logger.warning(
+                        "FLAT index type is not supported by pgvector. Skipping vector index creation. "
+                        "Please use 'HNSW' or 'IVFFLAT' instead."
+                    )
+                else:
+                    logger.warning(
+                        "Doesn't support this vector index type: {self.vector_index_type}. "
+                        "Supported types: HNSW, IVFFLAT"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"PostgreSQL, Failed to create vector index, type: {self.vector_index_type}, Got: {e}"
+                )
         # After all tables are created, attempt to migrate timestamp fields
         try:
             await self._migrate_timestamp_columns()
@@ -856,11 +936,11 @@ class PostgreSQLDB:
             logger.error(f"PostgreSQL, Failed to migrate timestamp columns: {e}")
             # Don't throw an exception, allow the initialization process to continue
 
-        # Migrate LLM cache table to add chunk_id and cache_type columns if needed
+        # Migrate LLM cache schema: add new columns and remove deprecated mode field
         try:
-            await self._migrate_llm_cache_add_columns()
+            await self._migrate_llm_cache_schema()
         except Exception as e:
-            logger.error(f"PostgreSQL, Failed to migrate LLM cache columns: {e}")
+            logger.error(f"PostgreSQL, Failed to migrate LLM cache schema: {e}")
             # Don't throw an exception, allow the initialization process to continue
 
         # Finally, attempt to migrate old doc chunks data if needed
@@ -1051,6 +1131,87 @@ class PostgreSQLDB:
             except Exception as e:
                 logger.warning(f"Failed to create index {index['name']}: {e}")
 
+    async def _create_hnsw_vector_indexes(self):
+        vdb_tables = [
+            "LIGHTRAG_VDB_CHUNKS",
+            "LIGHTRAG_VDB_ENTITY",
+            "LIGHTRAG_VDB_RELATION",
+        ]
+
+        embedding_dim = int(os.environ.get("EMBEDDING_DIM", 1024))
+
+        for k in vdb_tables:
+            vector_index_name = f"idx_{k.lower()}_hnsw_cosine"
+            check_vector_index_sql = f"""
+                    SELECT 1 FROM pg_indexes
+                    WHERE indexname = '{vector_index_name}'
+                      AND tablename = '{k.lower()}'
+                """
+            try:
+                vector_index_exists = await self.query(check_vector_index_sql)
+                if not vector_index_exists:
+                    # Only set vector dimension when index doesn't exist
+                    alter_sql = f"ALTER TABLE {k} ALTER COLUMN content_vector TYPE VECTOR({embedding_dim})"
+                    await self.execute(alter_sql)
+                    logger.debug(f"Ensured vector dimension for {k}")
+
+                    create_vector_index_sql = f"""
+                            CREATE INDEX {vector_index_name}
+                            ON {k} USING hnsw (content_vector vector_cosine_ops)
+                            WITH (m = {self.hnsw_m}, ef_construction = {self.hnsw_ef})
+                        """
+                    logger.info(f"Creating hnsw index {vector_index_name} on table {k}")
+                    await self.execute(create_vector_index_sql)
+                    logger.info(
+                        f"Successfully created vector index {vector_index_name} on table {k}"
+                    )
+                else:
+                    logger.info(
+                        f"HNSW vector index {vector_index_name} already exists on table {k}"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to create vector index on table {k}, Got: {e}")
+
+    async def _create_ivfflat_vector_indexes(self):
+        vdb_tables = [
+            "LIGHTRAG_VDB_CHUNKS",
+            "LIGHTRAG_VDB_ENTITY",
+            "LIGHTRAG_VDB_RELATION",
+        ]
+
+        embedding_dim = int(os.environ.get("EMBEDDING_DIM", 1024))
+
+        for k in vdb_tables:
+            index_name = f"idx_{k.lower()}_ivfflat_cosine"
+            check_index_sql = f"""
+                    SELECT 1 FROM pg_indexes
+                    WHERE indexname = '{index_name}' AND tablename = '{k.lower()}'
+                """
+            try:
+                exists = await self.query(check_index_sql)
+                if not exists:
+                    # Only set vector dimension when index doesn't exist
+                    alter_sql = f"ALTER TABLE {k} ALTER COLUMN content_vector TYPE VECTOR({embedding_dim})"
+                    await self.execute(alter_sql)
+                    logger.debug(f"Ensured vector dimension for {k}")
+
+                    create_sql = f"""
+                            CREATE INDEX {index_name}
+                            ON {k} USING ivfflat (content_vector vector_cosine_ops)
+                            WITH (lists = {self.ivfflat_lists})
+                        """
+                    logger.info(f"Creating ivfflat index {index_name} on table {k}")
+                    await self.execute(create_sql)
+                    logger.info(
+                        f"Successfully created ivfflat index {index_name} on table {k}"
+                    )
+                else:
+                    logger.info(
+                        f"Ivfflat vector index {index_name} already exists on table {k}"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to create ivfflat index on {k}: {e}")
+
     async def query(
         self,
         sql: str,
@@ -1190,6 +1351,28 @@ class ClientManager:
             "ssl_crl": os.environ.get(
                 "POSTGRES_SSL_CRL",
                 config.get("postgres", "ssl_crl", fallback=None),
+            ),
+            "vector_index_type": os.environ.get(
+                "POSTGRES_VECTOR_INDEX_TYPE",
+                config.get("postgres", "vector_index_type", fallback="HNSW"),
+            ),
+            "hnsw_m": int(
+                os.environ.get(
+                    "POSTGRES_HNSW_M",
+                    config.get("postgres", "hnsw_m", fallback="16"),
+                )
+            ),
+            "hnsw_ef": int(
+                os.environ.get(
+                    "POSTGRES_HNSW_EF",
+                    config.get("postgres", "hnsw_ef", fallback="64"),
+                )
+            ),
+            "ivfflat_lists": int(
+                os.environ.get(
+                    "POSTGRES_IVFFLAT_LISTS",
+                    config.get("postgres", "ivfflat_lists", fallback="100"),
+                )
             ),
         }
 
@@ -1379,14 +1562,21 @@ class PGKVStorage(BaseKVStorage):
         ):
             create_time = response.get("create_time", 0)
             update_time = response.get("update_time", 0)
-            # Map field names and add cache_type for compatibility
+            # Parse queryparam JSON string back to dict
+            queryparam = response.get("queryparam")
+            if isinstance(queryparam, str):
+                try:
+                    queryparam = json.loads(queryparam)
+                except json.JSONDecodeError:
+                    queryparam = None
+            # Map field names for compatibility (mode field removed)
             response = {
                 **response,
                 "return": response.get("return_value", ""),
                 "cache_type": response.get("cache_type"),
                 "original_prompt": response.get("original_prompt", ""),
                 "chunk_id": response.get("chunk_id"),
-                "mode": response.get("mode", "default"),
+                "queryparam": queryparam,
                 "create_time": create_time,
                 "update_time": create_time if update_time == 0 else update_time,
             }
@@ -1455,14 +1645,21 @@ class PGKVStorage(BaseKVStorage):
             for row in results:
                 create_time = row.get("create_time", 0)
                 update_time = row.get("update_time", 0)
-                # Map field names and add cache_type for compatibility
+                # Parse queryparam JSON string back to dict
+                queryparam = row.get("queryparam")
+                if isinstance(queryparam, str):
+                    try:
+                        queryparam = json.loads(queryparam)
+                    except json.JSONDecodeError:
+                        queryparam = None
+                # Map field names for compatibility (mode field removed)
                 processed_row = {
                     **row,
                     "return": row.get("return_value", ""),
                     "cache_type": row.get("cache_type"),
                     "original_prompt": row.get("original_prompt", ""),
                     "chunk_id": row.get("chunk_id"),
-                    "mode": row.get("mode", "default"),
+                    "queryparam": queryparam,
                     "create_time": create_time,
                     "update_time": create_time if update_time == 0 else update_time,
                 }
@@ -1565,11 +1762,13 @@ class PGKVStorage(BaseKVStorage):
                     "id": k,  # Use flattened key as id
                     "original_prompt": v["original_prompt"],
                     "return_value": v["return"],
-                    "mode": v.get("mode", "default"),  # Get mode from data
                     "chunk_id": v.get("chunk_id"),
                     "cache_type": v.get(
                         "cache_type", "extract"
                     ),  # Get cache_type from data
+                    "queryparam": json.dumps(v.get("queryparam"))
+                    if v.get("queryparam")
+                    else None,
                 }
 
                 await self.db.execute(upsert_sql, _data)
@@ -1634,39 +1833,6 @@ class PGKVStorage(BaseKVStorage):
             )
         except Exception as e:
             logger.error(f"Error while deleting records from {self.namespace}: {e}")
-
-    async def drop_cache_by_modes(self, modes: list[str] | None = None) -> bool:
-        """Delete specific records from storage by cache mode
-
-        Args:
-            modes (list[str]): List of cache modes to be dropped from storage
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not modes:
-            return False
-
-        try:
-            table_name = namespace_to_table_name(self.namespace)
-            if not table_name:
-                return False
-
-            if table_name != "LIGHTRAG_LLM_CACHE":
-                return False
-
-            sql = f"""
-            DELETE FROM {table_name}
-            WHERE workspace = $1 AND mode = ANY($2)
-            """
-            params = {"workspace": self.db.workspace, "modes": modes}
-
-            logger.info(f"Deleting cache by modes: {modes}")
-            await self.db.execute(sql, params)
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting cache by modes {modes}: {e}")
-            return False
 
     async def drop(self) -> dict[str, str]:
         """Drop the storage"""
@@ -1845,7 +2011,7 @@ class PGVectorStorage(BaseVectorStorage):
         params = {
             "workspace": self.db.workspace,
             "doc_ids": ids,
-            "better_than_threshold": self.cosine_better_than_threshold,
+            "closer_than_threshold": 1 - self.cosine_better_than_threshold,
             "top_k": top_k,
         }
         results = await self.db.query(sql, params=params, multirows=True)
@@ -4002,14 +4168,14 @@ TABLES = {
                     )"""
     },
     "LIGHTRAG_VDB_CHUNKS": {
-        "ddl": """CREATE TABLE LIGHTRAG_VDB_CHUNKS (
+        "ddl": f"""CREATE TABLE LIGHTRAG_VDB_CHUNKS (
                     id VARCHAR(255),
                     workspace VARCHAR(255),
                     full_doc_id VARCHAR(256),
                     chunk_order_index INTEGER,
                     tokens INTEGER,
                     content TEXT,
-                    content_vector VECTOR,
+                    content_vector VECTOR({os.environ.get("EMBEDDING_DIM", 1024)}),
                     file_path TEXT NULL,
                     create_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
@@ -4017,12 +4183,12 @@ TABLES = {
                     )"""
     },
     "LIGHTRAG_VDB_ENTITY": {
-        "ddl": """CREATE TABLE LIGHTRAG_VDB_ENTITY (
+        "ddl": f"""CREATE TABLE LIGHTRAG_VDB_ENTITY (
                     id VARCHAR(255),
                     workspace VARCHAR(255),
                     entity_name VARCHAR(512),
                     content TEXT,
-                    content_vector VECTOR,
+                    content_vector VECTOR({os.environ.get("EMBEDDING_DIM", 1024)}),
                     create_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     chunk_ids VARCHAR(255)[] NULL,
@@ -4031,13 +4197,13 @@ TABLES = {
                     )"""
     },
     "LIGHTRAG_VDB_RELATION": {
-        "ddl": """CREATE TABLE LIGHTRAG_VDB_RELATION (
+        "ddl": f"""CREATE TABLE LIGHTRAG_VDB_RELATION (
                     id VARCHAR(255),
                     workspace VARCHAR(255),
                     source_id VARCHAR(512),
                     target_id VARCHAR(512),
                     content TEXT,
-                    content_vector VECTOR,
+                    content_vector VECTOR({os.environ.get("EMBEDDING_DIM", 1024)}),
                     create_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     chunk_ids VARCHAR(255)[] NULL,
@@ -4049,14 +4215,14 @@ TABLES = {
         "ddl": """CREATE TABLE LIGHTRAG_LLM_CACHE (
 	                workspace varchar(255) NOT NULL,
 	                id varchar(255) NOT NULL,
-	                mode varchar(32) NOT NULL,
                     original_prompt TEXT,
                     return_value TEXT,
                     chunk_id VARCHAR(255) NULL,
                     cache_type VARCHAR(32),
+                    queryparam JSONB NULL,
                     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-	                CONSTRAINT LIGHTRAG_LLM_CACHE_PK PRIMARY KEY (workspace, mode, id)
+	                CONSTRAINT LIGHTRAG_LLM_CACHE_PK PRIMARY KEY (workspace, id)
                     )"""
     },
     "LIGHTRAG_DOC_STATUS": {
@@ -4114,14 +4280,11 @@ SQL_TEMPLATES = {
                                 EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                 FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id=$2
                             """,
-    "get_by_id_llm_response_cache": """SELECT id, original_prompt, return_value, mode, chunk_id, cache_type,
+    "get_by_id_llm_response_cache": """SELECT id, original_prompt, return_value, chunk_id, cache_type, queryparam,
                                 EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                 EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                 FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND id=$2
                                """,
-    "get_by_mode_id_llm_response_cache": """SELECT id, original_prompt, return_value, mode, chunk_id
-                           FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND mode=$2 AND id=$3
-                          """,
     "get_by_ids_full_docs": """SELECT id, COALESCE(content, '') as content
                                  FROM LIGHTRAG_DOC_FULL WHERE workspace=$1 AND id IN ({ids})
                             """,
@@ -4132,7 +4295,7 @@ SQL_TEMPLATES = {
                                   EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                    FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id IN ({ids})
                                 """,
-    "get_by_ids_llm_response_cache": """SELECT id, original_prompt, return_value, mode, chunk_id, cache_type,
+    "get_by_ids_llm_response_cache": """SELECT id, original_prompt, return_value, chunk_id, cache_type, queryparam,
                                  EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                  EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                  FROM LIGHTRAG_LLM_CACHE WHERE workspace=$1 AND id IN ({ids})
@@ -4163,14 +4326,14 @@ SQL_TEMPLATES = {
                         ON CONFLICT (workspace,id) DO UPDATE
                            SET content = $2, update_time = CURRENT_TIMESTAMP
                        """,
-    "upsert_llm_response_cache": """INSERT INTO LIGHTRAG_LLM_CACHE(workspace,id,original_prompt,return_value,mode,chunk_id,cache_type)
+    "upsert_llm_response_cache": """INSERT INTO LIGHTRAG_LLM_CACHE(workspace,id,original_prompt,return_value,chunk_id,cache_type,queryparam)
                                       VALUES ($1, $2, $3, $4, $5, $6, $7)
-                                      ON CONFLICT (workspace,mode,id) DO UPDATE
+                                      ON CONFLICT (workspace,id) DO UPDATE
                                       SET original_prompt = EXCLUDED.original_prompt,
                                       return_value=EXCLUDED.return_value,
-                                      mode=EXCLUDED.mode,
                                       chunk_id=EXCLUDED.chunk_id,
                                       cache_type=EXCLUDED.cache_type,
+                                      queryparam=EXCLUDED.queryparam,
                                       update_time = CURRENT_TIMESTAMP
                                      """,
     "upsert_text_chunk": """INSERT INTO LIGHTRAG_DOC_CHUNKS (workspace, id, tokens,
@@ -4240,21 +4403,19 @@ SQL_TEMPLATES = {
                       update_time = EXCLUDED.update_time
                      """,
     "relationships": """
-    WITH relevant_chunks AS (
-        SELECT id as chunk_id
-        FROM LIGHTRAG_VDB_CHUNKS
-        WHERE $2::varchar[] IS NULL OR full_doc_id = ANY($2::varchar[])
-    )
-    SELECT source_id as src_id, target_id as tgt_id, EXTRACT(EPOCH FROM create_time)::BIGINT as created_at
-    FROM (
-        SELECT r.id, r.source_id, r.target_id, r.create_time, 1 - (r.content_vector <=> '[{embedding_string}]'::vector) as distance
+        WITH relevant_chunks AS (
+            SELECT id as chunk_id
+            FROM LIGHTRAG_VDB_CHUNKS
+            WHERE $2::varchar[] IS NULL OR full_doc_id = ANY($2::varchar[])
+        )
+        SELECT r.source_id as src_id, r.target_id as tgt_id,
+               EXTRACT(EPOCH FROM r.create_time)::BIGINT as created_at
         FROM LIGHTRAG_VDB_RELATION r
         JOIN relevant_chunks c ON c.chunk_id = ANY(r.chunk_ids)
-        WHERE r.workspace=$1
-    ) filtered
-    WHERE distance>$3
-    ORDER BY distance DESC
-    LIMIT $4
+        WHERE r.workspace = $1
+          AND r.content_vector <=> '[{embedding_string}]'::vector < $3
+        ORDER BY r.content_vector <=> '[{embedding_string}]'::vector
+        LIMIT $4
     """,
     "entities": """
         WITH relevant_chunks AS (
@@ -4262,16 +4423,14 @@ SQL_TEMPLATES = {
             FROM LIGHTRAG_VDB_CHUNKS
             WHERE $2::varchar[] IS NULL OR full_doc_id = ANY($2::varchar[])
         )
-        SELECT entity_name, EXTRACT(EPOCH FROM create_time)::BIGINT as created_at FROM
-            (
-                SELECT e.id, e.entity_name, e.create_time, 1 - (e.content_vector <=> '[{embedding_string}]'::vector) as distance
-                FROM LIGHTRAG_VDB_ENTITY e
-                JOIN relevant_chunks c ON c.chunk_id = ANY(e.chunk_ids)
-                WHERE e.workspace=$1
-            ) as chunk_distances
-            WHERE distance>$3
-            ORDER BY distance DESC
-            LIMIT $4
+        SELECT e.entity_name,
+               EXTRACT(EPOCH FROM e.create_time)::BIGINT as created_at
+        FROM LIGHTRAG_VDB_ENTITY e
+        JOIN relevant_chunks c ON c.chunk_id = ANY(e.chunk_ids)
+        WHERE e.workspace = $1
+          AND e.content_vector <=> '[{embedding_string}]'::vector < $3
+        ORDER BY e.content_vector <=> '[{embedding_string}]'::vector
+        LIMIT $4
     """,
     "chunks": """
         WITH relevant_chunks AS (
@@ -4279,16 +4438,14 @@ SQL_TEMPLATES = {
             FROM LIGHTRAG_VDB_CHUNKS
             WHERE $2::varchar[] IS NULL OR full_doc_id = ANY($2::varchar[])
         )
-        SELECT id, content, file_path, EXTRACT(EPOCH FROM create_time)::BIGINT as created_at FROM
-            (
-                SELECT id, content, file_path, create_time, 1 - (content_vector <=> '[{embedding_string}]'::vector) as distance
-                FROM LIGHTRAG_VDB_CHUNKS
-                WHERE workspace=$1
-                AND id IN (SELECT chunk_id FROM relevant_chunks)
-            ) as chunk_distances
-            WHERE distance>$3
-            ORDER BY distance DESC
-            LIMIT $4
+        SELECT id, content, file_path,
+               EXTRACT(EPOCH FROM create_time)::BIGINT as created_at
+        FROM LIGHTRAG_VDB_CHUNKS
+        WHERE workspace = $1
+          AND id IN (SELECT chunk_id FROM relevant_chunks)
+          AND content_vector <=> '[{embedding_string}]'::vector < $3
+        ORDER BY content_vector <=> '[{embedding_string}]'::vector
+        LIMIT $4
     """,
     # DROP tables
     "drop_specifiy_table_workspace": """
