@@ -24,6 +24,12 @@ jobs:
       image-names: |
         ghcr.io/deroino/lightrag-modifyed
       
+      # 自定义标签规则修复rebase后的构建问题
+      tag-rules: |
+        type=raw,value=latest,priority=200
+        type=raw,value=stable-{{date 'YYYYMMDD'}}-{{sha}},priority=300
+        type=ref,event=branch,priority=100
+      
       # Enable email notifications
       email-enable: true
       email-to: wangchenghow@foxmail.com
