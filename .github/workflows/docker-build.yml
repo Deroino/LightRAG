@@ -22,7 +22,7 @@ jobs:
       dockerhub-enable: false
       ghcr-enable: true
       image-names: |
-        ghcr.io/deroino/lightrag-modifyed:latest
+        ghcr.io/deroino/lightrag-modifyed
       
       # Enable email notifications
       email-enable: true
